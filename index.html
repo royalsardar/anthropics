@@ -1,0 +1,1057 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Household Expenses Tracker + Net Worth</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+    :root { --bg: #f8f9fa; --card: white; --text: #212529; --accent: #007bff; --muted: #e9ecef; --border: #ddd; }
+    @media (prefers-color-scheme: dark) {
+        :root { --bg: #121212; --card: #1e1e1e; --text: #e0e0e0; --accent: #4da3ff; --muted: #2a2a2a; --border: #333; }
+    }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 16px; line-height: 1.6; }
+    .container { max-width: 1300px; margin: 0 auto; }
+    h1 { text-align: center; margin-bottom: 8px; }
+    .card { background: var(--card); border-radius: 16px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.1); }
+    input, select, button { padding: 10px 12px; margin: 6px 4px 6px 0; border-radius: 8px; border: 1px solid #ccc; font-size: 1rem; background: var(--card); color: var(--text); }
+    button { background: var(--accent); color: white; border: none; cursor: pointer; font-weight: bold; }
+    button:hover { filter: brightness(1.1); }
+    .delete-btn { background: #dc3545; }
+    .edit-btn { background: #ffc107; color: #212529; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { padding: 12px; text-align: left; border-bottom: 1px solid var(--border); }
+    th { background: rgba(0,123,255,0.1); }
+    .recurring-badge { background: #28a745; color: white; font-size: 0.75rem; padding: 2px 6px; border-radius: 12px; }
+    .summary { display: flex; gap: 30px; flex-wrap: wrap; align-items: center; }
+    .total { font-size: 2rem; font-weight: bold; color: #28a745; }
+    .canvas-container { position: relative; height: 320px; margin: 15px 0; }
+    .nav { text-align: center; margin: 20px 0; }
+    .networth { font-size: 2.1rem; font-weight: bold; }
+    .liability { color: #dc3545; }
+    .preview-table { max-height: 500px; overflow-y: auto; }
+    .mapping-box { margin: 15px 0; padding: 12px; background: var(--muted); border-radius: 8px; }
+    .warn { color: #dc3545; font-weight: bold; }
+    .flex-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+</style>
+</head>
+<body>
+<div class="container">
+    <h1>🏠 Household Expenses Tracker + Net Worth</h1>
+
+    <div class="nav">
+        <button onclick="showSection('expenses')">📊 Expenses</button>
+        <button onclick="showSection('networth')">💰 Net Worth & Debt</button>
+    </div>
+
+    <!-- EXPENSES SECTION -->
+    <div id="expensesSection">
+        <div class="card">
+            <h2 id="formTitle">Add New Expense</h2>
+            <input type="hidden" id="editId">
+            <input type="text" id="desc" placeholder="Description" style="width:98%">
+            <div class="flex-row">
+                <input type="number" id="amount" placeholder="Amount" step="0.01" style="width:160px">
+                <select id="category" style="width:210px" onchange="handleCategoryChange()">
+                    <option value="">Category</option>
+                </select>
+                <input type="text" id="customCategory" placeholder="New category" style="width:200px;display:none;">
+                <input type="text" id="forItem" placeholder="For (Toyota Camry, John's Phone...)" style="width:250px" list="itemSuggestions">
+                <input type="date" id="date">
+                <input type="text" id="paidby" placeholder="Paid by" style="width:160px">
+                <label><input type="checkbox" id="isRecurring"> Recurring</label>
+                <select id="frequency" style="width:130px" disabled>
+                    <option value="monthly">Monthly</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="biweekly">Bi-weekly</option>
+                    <option value="yearly">Yearly</option>
+                </select>
+            </div>
+            <button onclick="saveExpense()">💾 Save Expense</button>
+            <button onclick="cancelEdit()" style="background:#6c757d">Cancel</button>
+            <button onclick="importStatement()" style="background:#28a745">📥 Import Statement (CSV/PDF)</button>
+            <input type="file" id="fileInput" accept=".csv,.pdf,text/csv,application/pdf" style="display:none" onchange="handleFileSelected(event)">
+        </div>
+
+        <!-- Import Preview -->
+        <div class="card" id="importPreview" style="display:none;">
+            <h2>Import Preview - Column Mapping</h2>
+            <div id="mappingControls" class="mapping-box"></div>
+            <button onclick="applyMappingAndPreview()">🔄 Apply Mapping</button>
+            <button onclick="confirmImport()">✅ Import Selected</button>
+            <button onclick="cancelImport()" style="background:#6c757d">Cancel</button>
+            <div class="preview-table">
+                <table id="previewTable"><thead></thead><tbody></tbody></table>
+            </div>
+        </div>
+
+        <!-- Recurring templates -->
+        <div class="card" id="recurringCard" style="display:none;">
+            <h2>🔁 Recurring Expenses</h2>
+            <table id="recurringTable">
+                <thead><tr><th>Description</th><th>Category</th><th>For</th><th>Amount</th><th>Frequency</th><th>Next Due</th><th>Status</th><th>Actions</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+
+        <!-- Summary -->
+        <div class="card">
+            <h2>Summary</h2>
+            <select id="monthFilter" onchange="updateSummary()"></select>
+            <div class="summary">
+                <div><strong>Total Spent:</strong><br><span id="total" class="total">$0.00</span></div>
+                <div id="monthly"></div>
+                <div id="byPerson"></div>
+            </div>
+            <div class="canvas-container"><canvas id="mainChart"></canvas></div>
+        </div>
+
+        <div class="card">
+            <h2>All Expenses
+                <button onclick="exportCSV()" style="float:right;background:#6c757d">📤 Export CSV</button>
+            </h2>
+            <input type="text" id="search" placeholder="Search..." onkeyup="filterExpenses()" style="width:100%">
+            <table id="expensesTable">
+                <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>For</th><th>Amount</th><th>Paid By</th><th>Actions</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- NET WORTH SECTION -->
+    <div id="networthSection" style="display:none;">
+        <div class="card">
+            <h2>💰 Net Worth Summary</h2>
+            <div style="display:flex; gap:40px; flex-wrap:wrap;">
+                <div><strong>Assets:</strong><br><span id="totalAssets" class="networth">$0.00</span></div>
+                <div><strong>Liabilities:</strong><br><span id="totalLiabilities" class="networth liability">$0.00</span></div>
+                <div><strong>Net Worth:</strong><br><span id="netWorth" class="networth">$0.00</span></div>
+            </div>
+        </div>
+
+        <div style="display:flex; gap:20px; flex-wrap:wrap;">
+            <div class="card" style="flex:1; min-width:300px;">
+                <h3>Assets</h3>
+                <div class="flex-row">
+                    <input type="text" id="assetName" placeholder="Name (Home, TFSA...)" style="width:200px">
+                    <select id="assetCategory" style="width:160px">
+                        <option value="Cash">Cash</option>
+                        <option value="Investments">Investments</option>
+                        <option value="Retirement">Retirement</option>
+                        <option value="Real Estate">Real Estate</option>
+                        <option value="Vehicle">Vehicle</option>
+                        <option value="Other">Other</option>
+                    </select>
+                    <input type="number" id="assetValue" placeholder="Value" step="0.01" style="width:140px">
+                    <button onclick="saveAsset()">➕ Add Asset</button>
+                </div>
+                <table id="assetsTable">
+                    <thead><tr><th>Name</th><th>Category</th><th>Value</th><th></th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div class="card" style="flex:1; min-width:300px;">
+                <h3>Liabilities</h3>
+                <div class="flex-row">
+                    <input type="text" id="liabilityName" placeholder="Name (Visa, Car Loan...)" style="width:180px">
+                    <select id="liabilityType" style="width:150px">
+                        <option value="Credit Card">Credit Card</option>
+                        <option value="Mortgage">Mortgage</option>
+                        <option value="Car Loan">Car Loan</option>
+                        <option value="Student Loan">Student Loan</option>
+                        <option value="Line of Credit">Line of Credit</option>
+                        <option value="Other">Other</option>
+                    </select>
+                    <input type="number" id="liabilityBalance" placeholder="Balance" step="0.01" style="width:130px">
+                    <input type="number" id="liabilityRate" placeholder="APR %" step="0.01" style="width:100px">
+                    <input type="number" id="liabilityMin" placeholder="Min payment" step="0.01" style="width:130px">
+                    <button onclick="saveLiability()">➕ Add Debt</button>
+                </div>
+                <table id="liabilitiesTable">
+                    <thead><tr><th>Name</th><th>Type</th><th>Balance</th><th>APR</th><th>Min/mo</th><th></th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div style="display:flex; gap:20px; flex-wrap:wrap;">
+            <div class="card" style="flex:1; min-width:300px;"><h3>Asset Allocation</h3><div class="canvas-container"><canvas id="assetChart"></canvas></div></div>
+            <div class="card" style="flex:1; min-width:300px;"><h3>Liability Breakdown</h3><div class="canvas-container"><canvas id="liabilityChart"></canvas></div></div>
+        </div>
+
+        <div class="card">
+            <h2>❄️ Debt Snowball Timeline</h2>
+            <label>Extra Monthly Payment: $</label>
+            <input type="number" id="extraPayment" value="500" step="10">
+            <button onclick="runDebtSnowballWithChart()">Calculate Timeline</button>
+            <div class="canvas-container"><canvas id="debtTimelineChart"></canvas></div>
+            <div id="snowballResults"></div>
+        </div>
+    </div>
+</div>
+
+<datalist id="itemSuggestions">
+    <option value="Toyota Camry"><option value="Honda CRV"><option value="Electricity"><option value="John's Phone">
+</datalist>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+// pdf.js v4 ships as an ES module; grab it lazily so plain <script> code can use it.
+let pdfjsPromise = null;
+function getPdfjs() {
+    if (!pdfjsPromise) {
+        pdfjsPromise = import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.min.mjs').then(m => {
+            m.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs';
+            return m;
+        });
+    }
+    return pdfjsPromise;
+}
+
+// ==================== DATA ====================
+let expenses = JSON.parse(localStorage.getItem('expenses')) || [];
+let recurring = JSON.parse(localStorage.getItem('recurring')) || [];
+let customCategories = JSON.parse(localStorage.getItem('customCategories')) || [];
+let assets = JSON.parse(localStorage.getItem('assets')) || [];
+let liabilities = JSON.parse(localStorage.getItem('liabilities')) || [];
+let editId = null;
+
+let mainChart, assetChart, liabilityChart, timelineChart;
+
+const BASE_CATEGORIES = [
+    'Food','Dining Out','Coffee','Groceries','Home Expenses','Rent','Mortgage Payments','Property Tax',
+    'Home Repair and Maintenance','Utilities','Transport','Gas','Car Repair and Maintenance','Entertainment',
+    'Healthcare','Shopping','Insurance','Home Insurance','Life Insurance','Vehicle Insurance','Other Insurance',
+    'Education','Subscriptions','Cell Phone','Other'
+];
+
+let idSeq = Date.now();
+function uid() { return ++idSeq; }
+
+function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function money(n) { return '$' + Number(n || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+function getToday() { return new Date().toISOString().slice(0,10); }
+
+const PALETTE = ['#007bff','#28a745','#dc3545','#ffc107','#17a2b8','#6f42c1','#fd7e14','#20c997','#e83e8c','#6c757d','#8bc34a','#ff5722','#3f51b5','#9c27b0','#00bcd4'];
+
+// Charts need the Chart.js CDN; everything else keeps working offline
+function chartsAvailable() { return typeof Chart !== 'undefined'; }
+
+// ==================== CATEGORIES ====================
+function allCategories() {
+    return [...BASE_CATEGORIES.filter(c => c !== 'Other'), ...customCategories, 'Other'];
+}
+
+function populateCategorySelect(keepValue) {
+    const sel = document.getElementById('category');
+    const current = keepValue ?? sel.value;
+    sel.innerHTML = '<option value="">Category</option>' +
+        allCategories().map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('') +
+        '<option value="__custom__">+ Add Custom</option>';
+    if (current && [...sel.options].some(o => o.value === current)) sel.value = current;
+}
+
+function handleCategoryChange() {
+    const custom = document.getElementById('customCategory');
+    custom.style.display = document.getElementById('category').value === '__custom__' ? 'inline-block' : 'none';
+    if (custom.style.display !== 'none') custom.focus();
+}
+
+// ==================== EXPENSES CORE ====================
+function saveData() {
+    localStorage.setItem('expenses', JSON.stringify(expenses));
+    localStorage.setItem('recurring', JSON.stringify(recurring));
+    localStorage.setItem('customCategories', JSON.stringify(customCategories));
+    renderTable();
+    renderRecurring();
+    updateSummary();
+}
+
+function saveExpense() {
+    let category = document.getElementById('category').value;
+    const custom = document.getElementById('customCategory').value.trim();
+    if (category === '__custom__') {
+        if (!custom) return alert('Please enter the custom category name');
+        category = custom;
+        if (!customCategories.includes(category) && !BASE_CATEGORIES.includes(category)) {
+            customCategories.push(category);
+            populateCategorySelect(category);
+        }
+    }
+
+    const desc = document.getElementById('desc').value.trim();
+    const amount = parseFloat(document.getElementById('amount').value);
+    const forItem = document.getElementById('forItem').value.trim() || "—";
+    const date = document.getElementById('date').value || getToday();
+    const paidby = document.getElementById('paidby').value.trim() || "—";
+    const isRec = document.getElementById('isRecurring').checked;
+    const freq = document.getElementById('frequency').value;
+
+    if (!desc || !amount || amount <= 0 || !category) return alert("Please fill required fields (description, positive amount, category)");
+
+    if (editId) {
+        const exp = expenses.find(e => e.id === editId);
+        if (exp) Object.assign(exp, {desc, amount, category, forItem, date, paidby});
+        editId = null;
+        document.getElementById('formTitle').textContent = "Add New Expense";
+    } else if (isRec) {
+        recurring.push({id: uid(), desc, amount, category, forItem, paidby, frequency: freq, startDate: date, active: true, lastGenerated: null});
+        processRecurring();
+    } else {
+        expenses.unshift({id: uid(), desc, amount, category, forItem, date, paidby});
+    }
+
+    clearForm();
+    saveData();
+}
+
+function clearForm() {
+    document.getElementById('desc').value = '';
+    document.getElementById('amount').value = '';
+    document.getElementById('forItem').value = '';
+    document.getElementById('paidby').value = '';
+    document.getElementById('category').value = '';
+    document.getElementById('customCategory').value = '';
+    document.getElementById('customCategory').style.display = 'none';
+    document.getElementById('date').value = getToday();
+    document.getElementById('isRecurring').checked = false;
+    document.getElementById('frequency').disabled = true;
+}
+
+function cancelEdit() {
+    editId = null;
+    document.getElementById('formTitle').textContent = "Add New Expense";
+    clearForm();
+}
+
+function editExpense(id) {
+    const exp = expenses.find(e => e.id === id);
+    if (!exp) return;
+    editId = id;
+    document.getElementById('formTitle').textContent = "Edit Expense";
+    document.getElementById('desc').value = exp.desc;
+    document.getElementById('amount').value = exp.amount;
+    populateCategorySelect(exp.category);
+    document.getElementById('forItem').value = exp.forItem === '—' ? '' : exp.forItem;
+    document.getElementById('date').value = exp.date;
+    document.getElementById('paidby').value = exp.paidby === '—' ? '' : exp.paidby;
+    document.getElementById('isRecurring').checked = false;
+    document.getElementById('frequency').disabled = true;
+    window.scrollTo({top: 0, behavior: 'smooth'});
+}
+
+function deleteExpense(id) {
+    if (!confirm('Delete this expense?')) return;
+    expenses = expenses.filter(e => e.id !== id);
+    if (editId === id) cancelEdit();
+    saveData();
+}
+
+function renderTable() {
+    const tbody = document.querySelector('#expensesTable tbody');
+    const q = (document.getElementById('search').value || '').toLowerCase();
+    tbody.innerHTML = '';
+    const sorted = [...expenses].sort((a,b) => new Date(b.date) - new Date(a.date));
+    sorted.forEach(exp => {
+        const hay = `${exp.date} ${exp.desc} ${exp.category} ${exp.forItem} ${exp.paidby} ${exp.amount}`.toLowerCase();
+        if (q && !hay.includes(q)) return;
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td>${esc(exp.date)}</td>
+            <td>${esc(exp.desc)}${exp.recurringId ? ' <span class="recurring-badge">recurring</span>' : ''}</td>
+            <td>${esc(exp.category)}</td>
+            <td>${esc(exp.forItem || '—')}</td>
+            <td>${money(exp.amount)}</td>
+            <td>${esc(exp.paidby)}</td>
+            <td>
+                <button class="edit-btn" onclick="editExpense(${exp.id})">✏️</button>
+                <button class="delete-btn" onclick="deleteExpense(${exp.id})">🗑️</button>
+            </td>
+        `;
+        tbody.appendChild(row);
+    });
+}
+
+function filterExpenses() { renderTable(); }
+
+// ==================== RECURRING ====================
+function addInterval(dateStr, frequency) {
+    const d = new Date(dateStr + 'T00:00:00');
+    if (frequency === 'weekly') d.setDate(d.getDate() + 7);
+    else if (frequency === 'biweekly') d.setDate(d.getDate() + 14);
+    else if (frequency === 'yearly') d.setFullYear(d.getFullYear() + 1);
+    else { // monthly, clamped to end of month
+        const day = d.getDate();
+        d.setDate(1);
+        d.setMonth(d.getMonth() + 1);
+        const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+        d.setDate(Math.min(day, last));
+    }
+    return d.toISOString().slice(0,10);
+}
+
+function nextDue(r) {
+    return r.lastGenerated ? addInterval(r.lastGenerated, r.frequency) : r.startDate;
+}
+
+function processRecurring() {
+    const today = getToday();
+    let changed = false;
+    recurring.forEach(r => {
+        if (!r.active) return;
+        let due = nextDue(r);
+        let safety = 0;
+        while (due <= today && safety++ < 1000) {
+            expenses.unshift({id: uid(), desc: r.desc, amount: r.amount, category: r.category,
+                forItem: r.forItem, date: due, paidby: r.paidby, recurringId: r.id});
+            r.lastGenerated = due;
+            due = addInterval(due, r.frequency);
+            changed = true;
+        }
+    });
+    if (changed) {
+        localStorage.setItem('expenses', JSON.stringify(expenses));
+        localStorage.setItem('recurring', JSON.stringify(recurring));
+    }
+}
+
+function renderRecurring() {
+    const card = document.getElementById('recurringCard');
+    const tbody = document.querySelector('#recurringTable tbody');
+    if (!recurring.length) { card.style.display = 'none'; return; }
+    card.style.display = 'block';
+    tbody.innerHTML = '';
+    recurring.forEach(r => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td>${esc(r.desc)}</td>
+            <td>${esc(r.category)}</td>
+            <td>${esc(r.forItem || '—')}</td>
+            <td>${money(r.amount)}</td>
+            <td>${esc(r.frequency)}</td>
+            <td>${esc(nextDue(r))}</td>
+            <td>${r.active ? '<span class="recurring-badge">active</span>' : 'paused'}</td>
+            <td>
+                <button class="edit-btn" onclick="toggleRecurring(${r.id})">${r.active ? '⏸️' : '▶️'}</button>
+                <button class="delete-btn" onclick="deleteRecurring(${r.id})">🗑️</button>
+            </td>
+        `;
+        tbody.appendChild(row);
+    });
+}
+
+function toggleRecurring(id) {
+    const r = recurring.find(x => x.id === id);
+    if (!r) return;
+    r.active = !r.active;
+    if (r.active) processRecurring();
+    saveData();
+}
+
+function deleteRecurring(id) {
+    if (!confirm('Delete this recurring expense? (Already-generated entries stay in the list)')) return;
+    recurring = recurring.filter(r => r.id !== id);
+    saveData();
+}
+
+// ==================== SUMMARY & CHART ====================
+function populateMonthFilter() {
+    const sel = document.getElementById('monthFilter');
+    const current = sel.value;
+    const months = [...new Set(expenses.map(e => (e.date || '').slice(0,7)).filter(Boolean))].sort().reverse();
+    sel.innerHTML = '<option value="all">All Time</option>' +
+        months.map(m => {
+            const label = new Date(m + '-01T00:00:00').toLocaleDateString(undefined, {year: 'numeric', month: 'long'});
+            return `<option value="${m}">${label}</option>`;
+        }).join('');
+    if (current && [...sel.options].some(o => o.value === current)) sel.value = current;
+}
+
+function updateSummary() {
+    populateMonthFilter();
+    const filter = document.getElementById('monthFilter').value || 'all';
+    const filtered = filter === 'all' ? expenses : expenses.filter(e => (e.date || '').startsWith(filter));
+
+    const total = filtered.reduce((s, e) => s + e.amount, 0);
+    document.getElementById('total').textContent = money(total);
+
+    // Monthly stats
+    const monthTotals = {};
+    expenses.forEach(e => {
+        const m = (e.date || '').slice(0,7);
+        if (m) monthTotals[m] = (monthTotals[m] || 0) + e.amount;
+    });
+    const thisMonth = monthTotals[getToday().slice(0,7)] || 0;
+    const monthCount = Object.keys(monthTotals).length;
+    const avg = monthCount ? Object.values(monthTotals).reduce((a,b) => a+b, 0) / monthCount : 0;
+    document.getElementById('monthly').innerHTML =
+        `<strong>This Month:</strong><br>${money(thisMonth)}<br><strong>Avg / Month:</strong> ${money(avg)}`;
+
+    // By person
+    const byPerson = {};
+    filtered.forEach(e => { byPerson[e.paidby] = (byPerson[e.paidby] || 0) + e.amount; });
+    document.getElementById('byPerson').innerHTML = '<strong>By Person:</strong><br>' +
+        (Object.entries(byPerson).sort((a,b) => b[1]-a[1])
+            .map(([p, v]) => `${esc(p)}: ${money(v)}`).join('<br>') || '—');
+
+    // Category chart
+    const byCat = {};
+    filtered.forEach(e => { byCat[e.category] = (byCat[e.category] || 0) + e.amount; });
+    const entries = Object.entries(byCat).sort((a,b) => b[1]-a[1]);
+    if (!chartsAvailable()) return;
+    if (mainChart) mainChart.destroy();
+    mainChart = new Chart(document.getElementById('mainChart'), {
+        type: 'bar',
+        data: {
+            labels: entries.map(e => e[0]),
+            datasets: [{
+                label: filter === 'all' ? 'Spending by Category (All Time)' : `Spending by Category (${filter})`,
+                data: entries.map(e => e[1]),
+                backgroundColor: entries.map((_, i) => PALETTE[i % PALETTE.length])
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false },
+                tooltip: { callbacks: { label: ctx => money(ctx.parsed.y) } } },
+            scales: { y: { beginAtZero: true, ticks: { callback: v => '$' + v.toLocaleString() } } }
+        }
+    });
+}
+
+// ==================== EXPORT ====================
+function csvField(v) {
+    const s = String(v ?? '');
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function exportCSV() {
+    if (!expenses.length) return alert('No expenses to export');
+    const rows = [['Date','Description','Category','For','Amount','Paid By']];
+    [...expenses].sort((a,b) => new Date(b.date) - new Date(a.date))
+        .forEach(e => rows.push([e.date, e.desc, e.category, e.forItem, e.amount.toFixed(2), e.paidby]));
+    const csv = rows.map(r => r.map(csvField).join(',')).join('\n');
+    const blob = new Blob([csv], {type: 'text/csv'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `expenses-${getToday()}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
+// ==================== IMPORT (CSV + PDF with Column Mapping) ====================
+let rawCSVLines = [];          // array of arrays (parsed cells)
+let columnMapping = { date: -1, description: -1, amount: -1 };
+let hasHeaderRow = true;
+let previewRows = [];
+
+function importStatement() {
+    document.getElementById('fileInput').value = '';
+    document.getElementById('fileInput').click();
+}
+
+async function handleFileSelected(ev) {
+    const file = ev.target.files[0];
+    if (!file) return;
+    try {
+        if (/\.pdf$/i.test(file.name) || file.type === 'application/pdf') {
+            await parsePDF(file);
+        } else {
+            const text = await file.text();
+            parseCSVText(text);
+            hasHeaderRow = guessHeaderRow();
+        }
+        if (!rawCSVLines.length) return alert('No rows could be extracted from this file.');
+        autoDetectMapping();
+        showFullColumnMapping();
+        applyMappingAndPreview();
+        document.getElementById('importPreview').style.display = 'block';
+        document.getElementById('importPreview').scrollIntoView({behavior: 'smooth'});
+    } catch (err) {
+        console.error(err);
+        alert('Could not read file: ' + err.message);
+    }
+}
+
+function parseCSVLine(line) {
+    const cells = [];
+    let cur = '', inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (inQuotes) {
+            if (ch === '"') {
+                if (line[i+1] === '"') { cur += '"'; i++; }
+                else inQuotes = false;
+            } else cur += ch;
+        } else {
+            if (ch === '"') inQuotes = true;
+            else if (ch === ',') { cells.push(cur); cur = ''; }
+            else cur += ch;
+        }
+    }
+    cells.push(cur);
+    return cells.map(c => c.trim());
+}
+
+function parseCSVText(text) {
+    rawCSVLines = text.split(/\r?\n/)
+        .map(l => l.trim()).filter(Boolean)
+        .map(parseCSVLine)
+        .filter(cells => cells.some(c => c !== ''));
+}
+
+function guessHeaderRow() {
+    if (!rawCSVLines.length) return false;
+    // A header row has no cell that parses as an amount
+    return !rawCSVLines[0].some(c => /^-?\$?\(?\d[\d,]*\.?\d*\)?-?$/.test(c.replace(/\s/g,'')));
+}
+
+async function parsePDF(file) {
+    const pdfjs = await getPdfjs();
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjs.getDocument({data: buf}).promise;
+    const lines = [];
+    for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p);
+        const content = await page.getTextContent();
+        // Group text items into visual lines by their y coordinate
+        const byY = new Map();
+        content.items.forEach(item => {
+            if (!item.str.trim()) return;
+            const y = Math.round(item.transform[5]);
+            let key = null;
+            for (const k of byY.keys()) if (Math.abs(k - y) <= 2) { key = k; break; }
+            if (key === null) { key = y; byY.set(key, []); }
+            byY.get(key).push({x: item.transform[4], str: item.str});
+        });
+        [...byY.entries()].sort((a,b) => b[0] - a[0]).forEach(([, items]) => {
+            lines.push(items.sort((a,b) => a.x - b.x).map(i => i.str).join(' ').replace(/\s+/g, ' ').trim());
+        });
+    }
+    // Extract transaction-looking lines: a date + a trailing amount
+    const dateRe = /(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|[A-Z][a-z]{2,8}\.? \d{1,2}(?:,? \d{4})?)/;
+    const amtRe = /-?\$?\(?\d{1,3}(?:,\d{3})*\.\d{2}\)?-?/g;
+    rawCSVLines = [];
+    lines.forEach(line => {
+        const dm = line.match(dateRe);
+        const amounts = line.match(amtRe);
+        if (!dm || !amounts) return;
+        const amount = amounts[amounts.length - 1];
+        let desc = line.replace(dm[0], '');
+        amounts.forEach(a => { desc = desc.replace(a, ''); });
+        desc = desc.replace(/\s+/g, ' ').trim();
+        if (desc) rawCSVLines.push([dm[0], desc, amount]);
+    });
+    hasHeaderRow = false;
+    columnMapping = { date: 0, description: 1, amount: 2 };
+}
+
+function autoDetectMapping() {
+    const header = rawCSVLines[0].map(c => c.toLowerCase());
+    const maxCols = Math.max(...rawCSVLines.map(r => r.length));
+    const find = (...words) => header.findIndex(h => words.some(w => h.includes(w)));
+
+    let date = -1, desc = -1, amount = -1;
+    if (hasHeaderRow) {
+        date = find('date');
+        desc = find('desc', 'narrat', 'detail', 'memo', 'payee', 'merchant', 'transaction');
+        amount = find('amount', 'debit', 'value', 'total');
+    }
+    // Content-based fallback on the first data row
+    const sample = rawCSVLines[hasHeaderRow ? 1 : 0] || [];
+    if (date < 0) date = sample.findIndex(c => parseFlexibleDate(c));
+    if (amount < 0) {
+        for (let i = maxCols - 1; i >= 0; i--) {
+            if (i !== date && parseAmount(sample[i]) !== null) { amount = i; break; }
+        }
+    }
+    if (desc < 0) desc = sample.findIndex((c, i) => i !== date && i !== amount && c && parseAmount(c) === null);
+    columnMapping = { date, description: desc, amount };
+}
+
+function showFullColumnMapping() {
+    const maxCols = Math.max(...rawCSVLines.map(r => r.length));
+    const sample = rawCSVLines[0] || [];
+    const colOptions = sel => Array.from({length: maxCols}, (_, i) =>
+        `<option value="${i}" ${sel === i ? 'selected' : ''}>Column ${i+1}${sample[i] ? ' — "' + esc(String(sample[i]).slice(0, 25)) + '"' : ''}</option>`
+    ).join('');
+    document.getElementById('mappingControls').innerHTML = `
+        <label>Date: <select id="mapDate"><option value="-1">—</option>${colOptions(columnMapping.date)}</select></label>
+        <label>Description: <select id="mapDesc"><option value="-1">—</option>${colOptions(columnMapping.description)}</select></label>
+        <label>Amount: <select id="mapAmount"><option value="-1">—</option>${colOptions(columnMapping.amount)}</select></label>
+        <label><input type="checkbox" id="mapHeader" ${hasHeaderRow ? 'checked' : ''}> First row is header</label>
+        <br><small>Amounts are imported as positive expenses; uncheck rows you don't want (e.g. payments/credits).</small>
+    `;
+}
+
+function parseAmount(str) {
+    if (str === undefined || str === null) return null;
+    let s = String(str).replace(/[$,\s]/g, '');
+    if (!s) return null;
+    let neg = false;
+    if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1, -1); }
+    if (/-$/.test(s)) { neg = true; s = s.slice(0, -1); }
+    if (/^-/.test(s)) { neg = true; s = s.slice(1); }
+    if (!/^\d+(\.\d+)?$/.test(s)) return null;
+    const v = parseFloat(s);
+    return isNaN(v) ? null : (neg ? -v : v);
+}
+
+function parseFlexibleDate(str) {
+    if (!str) return null;
+    const s = String(str).trim();
+    let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (m) return isoDate(+m[1], +m[2], +m[3]);
+    m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+    if (m) {
+        let [a, b, y] = [+m[1], +m[2], +m[3]];
+        if (y < 100) y += 2000;
+        // Ambiguous: assume MM/DD unless first part can't be a month
+        const [mo, day] = a > 12 ? [b, a] : [a, b];
+        return isoDate(y, mo, day);
+    }
+    m = s.match(/^([A-Za-z]{3,9})\.? (\d{1,2})(?:,? (\d{4}))?$/);
+    if (m) {
+        const mo = new Date(`${m[1]} 1, 2000`).getMonth();
+        if (!isNaN(mo)) return isoDate(m[3] ? +m[3] : new Date().getFullYear(), mo + 1, +m[2]);
+    }
+    return null;
+}
+
+function isoDate(y, mo, d) {
+    if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+    return `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+}
+
+function applyMappingAndPreview() {
+    const mapDate = document.getElementById('mapDate');
+    if (mapDate) {
+        columnMapping = {
+            date: +mapDate.value,
+            description: +document.getElementById('mapDesc').value,
+            amount: +document.getElementById('mapAmount').value
+        };
+        hasHeaderRow = document.getElementById('mapHeader').checked;
+    }
+    if (columnMapping.date < 0 || columnMapping.description < 0 || columnMapping.amount < 0) {
+        return alert('Please map Date, Description and Amount columns');
+    }
+
+    previewRows = [];
+    const dataRows = hasHeaderRow ? rawCSVLines.slice(1) : rawCSVLines;
+    dataRows.forEach(cells => {
+        const date = parseFlexibleDate(cells[columnMapping.date]);
+        const desc = (cells[columnMapping.description] || '').trim();
+        const amt = parseAmount(cells[columnMapping.amount]);
+        if (!date || !desc || amt === null || amt === 0) return;
+        previewRows.push({date, desc, amount: Math.abs(amt), category: autoCategorize(desc), checked: amt !== 0});
+    });
+
+    const thead = document.querySelector('#previewTable thead');
+    const tbody = document.querySelector('#previewTable tbody');
+    thead.innerHTML = '<tr><th><input type="checkbox" id="checkAll" checked onchange="toggleAllPreview(this.checked)"></th><th>Date</th><th>Description</th><th>Amount</th><th>Category</th></tr>';
+    tbody.innerHTML = '';
+    if (!previewRows.length) {
+        tbody.innerHTML = '<tr><td colspan="5">No valid transactions found with this mapping.</td></tr>';
+        return;
+    }
+    const catOpts = allCategories();
+    previewRows.forEach((r, i) => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td><input type="checkbox" data-i="${i}" class="preview-check" ${r.checked ? 'checked' : ''}></td>
+            <td>${esc(r.date)}</td>
+            <td>${esc(r.desc)}</td>
+            <td>${money(r.amount)}</td>
+            <td><select data-i="${i}" class="preview-cat">${catOpts.map(c =>
+                `<option value="${esc(c)}" ${c === r.category ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></td>
+        `;
+        tbody.appendChild(row);
+    });
+}
+
+function toggleAllPreview(checked) {
+    document.querySelectorAll('.preview-check').forEach(cb => { cb.checked = checked; });
+}
+
+function confirmImport() {
+    let count = 0;
+    document.querySelectorAll('.preview-check').forEach(cb => {
+        if (!cb.checked) return;
+        const r = previewRows[+cb.dataset.i];
+        const catSel = document.querySelector(`.preview-cat[data-i="${cb.dataset.i}"]`);
+        expenses.unshift({id: uid(), desc: r.desc, amount: r.amount,
+            category: catSel ? catSel.value : r.category, forItem: '—', date: r.date, paidby: 'Imported'});
+        count++;
+    });
+    cancelImport();
+    saveData();
+    alert(`Imported ${count} transaction${count === 1 ? '' : 's'}`);
+}
+
+function cancelImport() {
+    document.getElementById('importPreview').style.display = 'none';
+    rawCSVLines = [];
+    previewRows = [];
+}
+
+function autoCategorize(desc) {
+    const d = desc.toUpperCase();
+    if (/TIM HORT|STARBUCKS|COFFEE|CAFE/.test(d)) return 'Coffee';
+    if (/RESTAURANT|DINING|MCDONALD|BURGER|PIZZA|SUBWAY|WENDY|KFC|A&W|DOORDASH|UBER ?EATS|SKIP/.test(d)) return 'Dining Out';
+    if (/GROCERY|SUPERSTORE|WALMART|COSTCO|SAFEWAY|SOBEYS|LOBLAW|NO ?FRILLS|FRESHCO|SAVE.ON/.test(d)) return 'Groceries';
+    if (/SHELL|PETRO|ESSO|CHEVRON|HUSKY|MOBIL|GAS|FUEL/.test(d)) return 'Gas';
+    if (/MORTGAGE/.test(d)) return 'Mortgage Payments';
+    if (/RENT/.test(d)) return 'Rent';
+    if (/HYDRO|ELECTRIC|WATER|ENBRIDGE|FORTIS|UTILIT/.test(d)) return 'Utilities';
+    if (/NETFLIX|SPOTIFY|DISNEY|PRIME|CRAVE|APPLE\.COM|SUBSCRIPTION|YOUTUBE/.test(d)) return 'Subscriptions';
+    if (/ROGERS|BELL|TELUS|FIDO|KOODO|FREEDOM|VERIZON|T-MOBILE|AT&T/.test(d)) return 'Cell Phone';
+    if (/PHARMA|SHOPPERS|DRUG|DENTAL|CLINIC|MEDICAL/.test(d)) return 'Healthcare';
+    if (/INSURANCE/.test(d)) return 'Insurance';
+    if (/UBER|LYFT|TRANSIT|TAXI|PARKING/.test(d)) return 'Transport';
+    if (/CINEMA|CINEPLEX|THEATRE|MOVIE|STEAM|PLAYSTATION|XBOX|NINTENDO/.test(d)) return 'Entertainment';
+    if (/AMAZON|AMZN|EBAY|BEST ?BUY|IKEA|HOME ?DEPOT|CANADIAN ?TIRE/.test(d)) return 'Shopping';
+    if (/TUITION|SCHOOL|UNIVERSITY|COLLEGE|COURSE/.test(d)) return 'Education';
+    return 'Other';
+}
+
+// ==================== NET WORTH & DEBT ====================
+function saveNetWorthData() {
+    localStorage.setItem('assets', JSON.stringify(assets));
+    localStorage.setItem('liabilities', JSON.stringify(liabilities));
+    renderAssets();
+    renderLiabilities();
+    updateNetWorth();
+}
+
+function saveAsset() {
+    const name = document.getElementById('assetName').value.trim();
+    const category = document.getElementById('assetCategory').value;
+    const value = parseFloat(document.getElementById('assetValue').value);
+    if (!name || isNaN(value) || value < 0) return alert('Please enter an asset name and value');
+    assets.push({id: uid(), name, category, value});
+    document.getElementById('assetName').value = '';
+    document.getElementById('assetValue').value = '';
+    saveNetWorthData();
+}
+
+function deleteAsset(id) {
+    assets = assets.filter(a => a.id !== id);
+    saveNetWorthData();
+}
+
+function saveLiability() {
+    const name = document.getElementById('liabilityName').value.trim();
+    const type = document.getElementById('liabilityType').value;
+    const balance = parseFloat(document.getElementById('liabilityBalance').value);
+    const rate = parseFloat(document.getElementById('liabilityRate').value) || 0;
+    const minPayment = parseFloat(document.getElementById('liabilityMin').value) || 0;
+    if (!name || isNaN(balance) || balance <= 0) return alert('Please enter a debt name and balance');
+    liabilities.push({id: uid(), name, type, balance, rate, minPayment});
+    ['liabilityName','liabilityBalance','liabilityRate','liabilityMin'].forEach(id => document.getElementById(id).value = '');
+    saveNetWorthData();
+}
+
+function deleteLiability(id) {
+    liabilities = liabilities.filter(l => l.id !== id);
+    saveNetWorthData();
+}
+
+function renderAssets() {
+    const tbody = document.querySelector('#assetsTable tbody');
+    tbody.innerHTML = '';
+    assets.forEach(a => {
+        const row = document.createElement('tr');
+        row.innerHTML = `<td>${esc(a.name)}</td><td>${esc(a.category)}</td><td>${money(a.value)}</td>
+            <td><button class="delete-btn" onclick="deleteAsset(${a.id})">🗑️</button></td>`;
+        tbody.appendChild(row);
+    });
+}
+
+function renderLiabilities() {
+    const tbody = document.querySelector('#liabilitiesTable tbody');
+    tbody.innerHTML = '';
+    liabilities.forEach(l => {
+        const row = document.createElement('tr');
+        row.innerHTML = `<td>${esc(l.name)}</td><td>${esc(l.type)}</td><td>${money(l.balance)}</td>
+            <td>${l.rate.toFixed(2)}%</td><td>${money(l.minPayment)}</td>
+            <td><button class="delete-btn" onclick="deleteLiability(${l.id})">🗑️</button></td>`;
+        tbody.appendChild(row);
+    });
+}
+
+function updateNetWorth() {
+    const totalAssets = assets.reduce((s, a) => s + a.value, 0);
+    const totalLiabilities = liabilities.reduce((s, l) => s + l.balance, 0);
+    const net = totalAssets - totalLiabilities;
+    document.getElementById('totalAssets').textContent = money(totalAssets);
+    document.getElementById('totalLiabilities').textContent = money(totalLiabilities);
+    const netEl = document.getElementById('netWorth');
+    netEl.textContent = money(net);
+    netEl.style.color = net >= 0 ? '#28a745' : '#dc3545';
+
+    // Asset allocation by category
+    if (!chartsAvailable()) return;
+    const byCat = {};
+    assets.forEach(a => { byCat[a.category] = (byCat[a.category] || 0) + a.value; });
+    if (assetChart) assetChart.destroy();
+    assetChart = new Chart(document.getElementById('assetChart'), {
+        type: 'doughnut',
+        data: {
+            labels: Object.keys(byCat),
+            datasets: [{data: Object.values(byCat), backgroundColor: PALETTE}]
+        },
+        options: { responsive: true, maintainAspectRatio: false,
+            plugins: { tooltip: { callbacks: { label: ctx => `${ctx.label}: ${money(ctx.parsed)}` } } } }
+    });
+
+    if (liabilityChart) liabilityChart.destroy();
+    liabilityChart = new Chart(document.getElementById('liabilityChart'), {
+        type: 'doughnut',
+        data: {
+            labels: liabilities.map(l => l.name),
+            datasets: [{data: liabilities.map(l => l.balance), backgroundColor: PALETTE.slice(2).concat(PALETTE)}]
+        },
+        options: { responsive: true, maintainAspectRatio: false,
+            plugins: { tooltip: { callbacks: { label: ctx => `${ctx.label}: ${money(ctx.parsed)}` } } } }
+    });
+}
+
+function runDebtSnowballWithChart() {
+    const results = document.getElementById('snowballResults');
+    if (!liabilities.length) {
+        results.innerHTML = '<p>Add some debts above to calculate a payoff timeline.</p>';
+        return;
+    }
+    const extra = parseFloat(document.getElementById('extraPayment').value) || 0;
+    // Snowball order: smallest balance first
+    const debts = liabilities.map(l => ({...l})).sort((a, b) => a.balance - b.balance);
+    const totalBudget = extra + debts.reduce((s, d) => s + d.minPayment, 0);
+
+    const monthlyInterest0 = debts.reduce((s, d) => s + d.balance * d.rate / 1200, 0);
+    if (totalBudget <= monthlyInterest0) {
+        results.innerHTML = `<p class="warn">⚠️ Your total monthly payment (${money(totalBudget)}) doesn't cover the monthly interest (${money(monthlyInterest0)}). These debts will never be paid off — increase the extra payment or minimums.</p>`;
+        if (timelineChart) timelineChart.destroy();
+        return;
+    }
+
+    const MAX_MONTHS = 600;
+    const history = debts.map(() => [/* balance per month */]);
+    const totalHistory = [];
+    const payoffMonth = debts.map(() => null);
+    let totalInterest = 0;
+    let month = 0;
+
+    debts.forEach((d, i) => history[i].push(d.balance));
+    totalHistory.push(debts.reduce((s, d) => s + d.balance, 0));
+
+    while (debts.some(d => d.balance > 0.005) && month < MAX_MONTHS) {
+        month++;
+        // 1. Accrue interest
+        debts.forEach(d => {
+            if (d.balance <= 0.005) return;
+            const interest = d.balance * d.rate / 1200;
+            d.balance += interest;
+            totalInterest += interest;
+        });
+        // 2. Pay minimums, then throw the rest (extra + freed-up minimums) at the smallest debt
+        let budget = totalBudget;
+        debts.forEach(d => {
+            if (d.balance <= 0.005) return;
+            const pay = Math.min(d.minPayment, d.balance, budget);
+            d.balance -= pay;
+            budget -= pay;
+        });
+        for (const d of debts) {
+            if (budget <= 0) break;
+            if (d.balance <= 0.005) continue;
+            const pay = Math.min(budget, d.balance);
+            d.balance -= pay;
+            budget -= pay;
+        }
+        // 3. Record
+        debts.forEach((d, i) => {
+            if (d.balance <= 0.005) { d.balance = 0; if (payoffMonth[i] === null) payoffMonth[i] = month; }
+            history[i].push(d.balance);
+        });
+        totalHistory.push(debts.reduce((s, d) => s + d.balance, 0));
+    }
+
+    // Chart
+    const now = new Date();
+    if (chartsAvailable()) {
+    const labels = totalHistory.map((_, m) => {
+        const d = new Date(now.getFullYear(), now.getMonth() + m, 1);
+        return d.toLocaleDateString(undefined, {month: 'short', year: '2-digit'});
+    });
+    if (timelineChart) timelineChart.destroy();
+    timelineChart = new Chart(document.getElementById('debtTimelineChart'), {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [
+                ...debts.map((d, i) => ({
+                    label: d.name, data: history[i],
+                    borderColor: PALETTE[i % PALETTE.length],
+                    backgroundColor: PALETTE[i % PALETTE.length],
+                    pointRadius: 0, tension: 0.2
+                })),
+                { label: 'Total Debt', data: totalHistory, borderColor: '#6c757d',
+                  borderDash: [6, 4], pointRadius: 0, tension: 0.2 }
+            ]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: { tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${money(ctx.parsed.y)}` } } },
+            scales: { y: { beginAtZero: true, ticks: { callback: v => '$' + v.toLocaleString() } } }
+        }
+    });
+    }
+
+    // Results
+    const debtFree = month < MAX_MONTHS;
+    const freeDate = new Date(now.getFullYear(), now.getMonth() + month, 1)
+        .toLocaleDateString(undefined, {month: 'long', year: 'numeric'});
+    const order = debts.map((d, i) => ({name: d.name, month: payoffMonth[i]}))
+        .sort((a, b) => (a.month ?? Infinity) - (b.month ?? Infinity));
+    results.innerHTML = `
+        <h3>${debtFree ? `🎉 Debt-free in ${month} month${month === 1 ? '' : 's'} (${freeDate})` : `⚠️ Not paid off within ${MAX_MONTHS} months`}</h3>
+        <p><strong>Total monthly payment:</strong> ${money(totalBudget)} (minimums + ${money(extra)} extra)<br>
+        <strong>Total interest paid:</strong> ${money(totalInterest)}</p>
+        <table>
+            <thead><tr><th>#</th><th>Debt</th><th>Paid Off</th></tr></thead>
+            <tbody>${order.map((o, i) => {
+                const d = o.month !== null
+                    ? new Date(now.getFullYear(), now.getMonth() + o.month, 1).toLocaleDateString(undefined, {month: 'long', year: 'numeric'}) + ` (month ${o.month})`
+                    : '—';
+                return `<tr><td>${i+1}</td><td>${esc(o.name)}</td><td>${d}</td></tr>`;
+            }).join('')}</tbody>
+        </table>
+    `;
+}
+
+// ==================== NAVIGATION & INIT ====================
+function showSection(sec) {
+    document.getElementById('expensesSection').style.display = sec === 'expenses' ? 'block' : 'none';
+    document.getElementById('networthSection').style.display = sec === 'networth' ? 'block' : 'none';
+    if (sec === 'networth') { updateNetWorth(); }
+    else { updateSummary(); }
+}
+
+document.getElementById('isRecurring').addEventListener('change', e => {
+    document.getElementById('frequency').disabled = !e.target.checked;
+});
+
+populateCategorySelect();
+document.getElementById('date').value = getToday();
+processRecurring();
+renderTable();
+renderRecurring();
+renderAssets();
+renderLiabilities();
+showSection('expenses');
+</script>
+</body>
+</html>
