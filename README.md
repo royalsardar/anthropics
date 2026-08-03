@@ -2,6 +2,15 @@
 
 A single-file, no-backend household finance app. Open `index.html` in any modern browser — all data is stored locally in your browser via `localStorage`.
 
+Two builds are included:
+
+| File | Charts | PDF import | Extras |
+|------|--------|------------|--------|
+| `index.html` | Chart.js (CDN) | Yes (pdf.js CDN) | Full version |
+| `test.html` | Hand-rolled canvas (no CDN, works offline) | No (CSV only) | One-click sample data loader + "clear all" button for quick testing |
+
+`test.html` is fully self-contained — no network access needed — so it also works in restricted environments that block CDNs.
+
 ## Features
 
 ### 📊 Expenses
