@@ -34,6 +34,12 @@
     .mapping-box { margin: 15px 0; padding: 12px; background: var(--muted); border-radius: 8px; }
     .warn { color: #dc3545; font-weight: bold; }
     .flex-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    #toastHost { position: fixed; bottom: 16px; right: 16px; z-index: 1000; display: flex; flex-direction: column; gap: 8px; max-width: 360px; }
+    .toast { background: var(--card); color: var(--text); border: 1px solid var(--border); border-left: 4px solid #28a745; padding: 10px 14px; border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,0.25); font-size: 0.9rem; }
+    .toast.error { border-left-color: #dc3545; }
+    .import-status { color: var(--text-2, #6c757d); font-size: 0.92rem; margin: 4px 0 8px; min-height: 1.2em; }
+    .import-status.warn { color: #dc3545; font-weight: 600; }
+
 </style>
 </head>
 <body>
@@ -77,6 +83,7 @@
         <!-- Import Preview -->
         <div class="card" id="importPreview" style="display:none;">
             <h2>Import Statement — Column Mapping</h2>
+            <div id="importStatus" class="import-status"></div>
             <div id="mappingControls" class="mapping-box"></div>
             <button onclick="applyMappingAndPreview()">🔄 Apply Mapping</button>
             <button onclick="confirmImport()">✅ Import Selected &amp; Continue</button>
@@ -87,6 +94,17 @@
             </div>
         </div>
 
+
+        <!-- Imported statements -->
+        <div class="card" id="statementsCard" style="display:none;">
+            <h2>📄 Imported Statements</h2>
+            <div class="table-scroll">
+            <table id="statementsTable">
+                <thead><tr><th>File</th><th>Account</th><th class="num">Transactions</th><th>Period</th><th>Imported On</th><th></th></tr></thead>
+                <tbody></tbody>
+            </table>
+            </div>
+        </div>
         <!-- Recurring templates -->
         <div class="card" id="recurringCard" style="display:none;">
             <h2>🔁 Recurring Expenses</h2>
@@ -275,7 +293,7 @@ function saveExpense() {
     let category = document.getElementById('category').value;
     const custom = document.getElementById('customCategory').value.trim();
     if (category === '__custom__') {
-        if (!custom) return alert('Please enter the custom category name');
+        if (!custom) return showToast('Please enter the custom category name', 'error');
         category = custom;
         if (!customCategories.includes(category) && !BASE_CATEGORIES.includes(category)) {
             customCategories.push(category);
@@ -291,7 +309,7 @@ function saveExpense() {
     const isRec = document.getElementById('isRecurring').checked;
     const freq = document.getElementById('frequency').value;
 
-    if (!desc || !amount || amount <= 0 || !category) return alert("Please fill required fields (description, positive amount, category)");
+    if (!desc || !amount || amount <= 0 || !category) return showToast("Please fill required fields: description, positive amount, and category", "error");
 
     if (editId) {
         const exp = expenses.find(e => e.id === editId);
@@ -344,11 +362,14 @@ function editExpense(id) {
     window.scrollTo({top: 0, behavior: 'smooth'});
 }
 
-function deleteExpense(id) {
-    if (!confirm('Delete this expense?')) return;
-    expenses = expenses.filter(e => e.id !== id);
-    if (editId === id) cancelEdit();
-    saveData();
+function deleteExpense(id, btn) {
+    needsConfirm('exp' + id, btn, () => {
+        expenses = expenses.filter(e => e.id !== id);
+        if (editId === id) cancelEdit();
+        saveData();
+        renderStatements();
+        showToast('Expense deleted');
+    }, 'Delete?');
 }
 
 function renderTable() {
@@ -369,7 +390,7 @@ function renderTable() {
             <td>${esc(exp.paidby)}</td>
             <td>
                 <button class="edit-btn" onclick="editExpense(${exp.id})">✏️</button>
-                <button class="delete-btn" onclick="deleteExpense(${exp.id})">🗑️</button>
+                <button class="delete-btn" onclick="deleteExpense(${exp.id}, this)">🗑️</button>
             </td>
         `;
         tbody.appendChild(row);
@@ -437,7 +458,7 @@ function renderRecurring() {
             <td>${r.active ? '<span class="recurring-badge">active</span>' : 'paused'}</td>
             <td>
                 <button class="edit-btn" onclick="toggleRecurring(${r.id})">${r.active ? '⏸️' : '▶️'}</button>
-                <button class="delete-btn" onclick="deleteRecurring(${r.id})">🗑️</button>
+                <button class="delete-btn" onclick="deleteRecurring(${r.id}, this)">🗑️</button>
             </td>
         `;
         tbody.appendChild(row);
@@ -452,10 +473,12 @@ function toggleRecurring(id) {
     saveData();
 }
 
-function deleteRecurring(id) {
-    if (!confirm('Delete this recurring expense? (Already-generated entries stay in the list)')) return;
-    recurring = recurring.filter(r => r.id !== id);
-    saveData();
+function deleteRecurring(id, btn) {
+    needsConfirm('rec' + id, btn, () => {
+        recurring = recurring.filter(r => r.id !== id);
+        saveData();
+        showToast('Recurring expense deleted — already-generated entries stay');
+    }, 'Delete?');
 }
 
 // ==================== SUMMARY & CHART ====================
@@ -530,7 +553,7 @@ function csvField(v) {
 }
 
 function exportCSV() {
-    if (!expenses.length) return alert('No expenses to export');
+    if (!expenses.length) return showToast('No expenses to export', 'error');
     const rows = [['Date','Description','Category','For','Amount','Paid By']];
     [...expenses].sort((a,b) => new Date(b.date) - new Date(a.date))
         .forEach(e => rows.push([e.date, e.desc, e.category, e.forItem, e.amount.toFixed(2), e.paidby]));
@@ -559,6 +582,77 @@ const impStore = typeof store !== 'undefined' ? store : {
 };
 let lastAccountName = impStore.get('lastAccountName') || '';
 let learnedCategories = impStore.get('learnedCategories') || {};
+let statements = impStore.get('statements') || [];
+
+// ---- In-page feedback: alert()/confirm() are silently suppressed in sandboxed
+// ---- iframes (like the artifact viewer), so all feedback must live in the page.
+function showToast(msg, kind) {
+    let host = document.getElementById('toastHost');
+    if (!host) { host = document.createElement('div'); host.id = 'toastHost'; document.body.appendChild(host); }
+    const t = document.createElement('div');
+    t.className = 'toast' + (kind === 'error' ? ' error' : '');
+    t.textContent = msg;
+    host.appendChild(t);
+    setTimeout(() => t.remove(), 8000);
+}
+
+// Two-click confirm: first click flips the button label, second click within 4s runs the action
+let pendingConfirm = null;
+function needsConfirm(key, btn, fn, label) {
+    if (pendingConfirm && pendingConfirm.key === key) {
+        clearTimeout(pendingConfirm.timer);
+        pendingConfirm.restore();
+        fn();
+        return;
+    }
+    if (pendingConfirm) { clearTimeout(pendingConfirm.timer); pendingConfirm.restore(); }
+    const orig = btn.innerHTML;
+    btn.innerHTML = label || 'Sure?';
+    const restore = () => { btn.innerHTML = orig; pendingConfirm = null; };
+    pendingConfirm = { key, restore, timer: setTimeout(restore, 4000) };
+}
+
+function setImportStatus(msg, isError) {
+    const el = document.getElementById('importStatus');
+    if (el) {
+        el.textContent = msg || '';
+        el.className = 'import-status' + (isError ? ' warn' : '');
+    }
+}
+
+function renderStatements() {
+    const card = document.getElementById('statementsCard');
+    if (!card) return;
+    const tbody = document.querySelector('#statementsTable tbody');
+    if (!statements.length) { card.style.display = 'none'; return; }
+    card.style.display = 'block';
+    tbody.innerHTML = '';
+    statements.forEach(st => {
+        const live = expenses.filter(e => e.statementId === st.id).length;
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td>${esc(st.fileName)}</td>
+            <td><span class="pill">${esc(st.account)}</span></td>
+            <td class="num">${live}</td>
+            <td>${esc(st.from || '—')} to ${esc(st.to || '—')}</td>
+            <td>${esc(st.at)}</td>
+            <td><button class="small danger delete-btn" onclick="deleteStatement(${st.id}, this)" aria-label="Remove statement">🗑️</button></td>`;
+        tbody.appendChild(row);
+    });
+}
+
+function deleteStatement(id, btn) {
+    needsConfirm('st' + id, btn, () => {
+        const st = statements.find(s => s.id === id);
+        const before = expenses.length;
+        expenses = expenses.filter(e => e.statementId !== id);
+        statements = statements.filter(s => s.id !== id);
+        impStore.set('statements', statements);
+        saveData();
+        renderStatements();
+        showToast(`Removed ${st ? st.fileName : 'statement'} and its ${before - expenses.length} transactions`);
+    }, 'Remove?');
+}
 
 // Ignore digits so "TIM HORTONS #2231" and "#0917" learn as one merchant
 function catKey(desc) { return String(desc).toUpperCase().replace(/\d+/g, '').replace(/\s+/g, ' ').trim(); }
@@ -572,6 +666,7 @@ function importStatement() {
 
 function handleFileSelected(ev) {
     const files = [...ev.target.files];
+    ev.target.value = '';   // reset so picking the same file again still fires a change event
     if (!files.length) return;
     importQueue = files;
     importFileIndex = -1;
@@ -583,6 +678,12 @@ async function processNextImportFile() {
     importFileIndex++;
     if (importFileIndex >= importQueue.length) return finishImportSession(true);
     const file = importQueue[importFileIndex];
+    document.getElementById('mappingControls').innerHTML = '';
+    document.querySelector('#previewTable thead').innerHTML = '';
+    document.querySelector('#previewTable tbody').innerHTML = '';
+    document.getElementById('importPreview').style.display = 'block';
+    document.getElementById('importPreview').scrollIntoView({behavior: 'smooth'});
+    setImportStatus(`Reading ${file.name}` + (importQueue.length > 1 ? ` (file ${importFileIndex + 1} of ${importQueue.length})` : '') + '…');
     try {
         if (/\.pdf$/i.test(file.name) || file.type === 'application/pdf') {
             const handled = await handlePDFFile(file);
@@ -593,15 +694,14 @@ async function processNextImportFile() {
             autoDetectMapping();
         }
         if (!rawCSVLines.length) {
-            alert(`No rows could be extracted from ${file.name} — skipping it.`);
+            showToast(`${file.name}: no transactions could be extracted — skipping it.`, 'error');
             return processNextImportFile();
         }
+        setImportStatus(`${file.name}: found ${rawCSVLines.length} candidate rows. Check the mapping, then import.`);
         showFullColumnMapping();
         applyMappingAndPreview();
-        document.getElementById('importPreview').style.display = 'block';
-        document.getElementById('importPreview').scrollIntoView({behavior: 'smooth'});
     } catch (err) {
-        alert(`Could not read ${file.name}: ${err.message} — skipping it.`);
+        showToast(`Could not read ${file.name}: ${err.message} — skipping it.`, 'error');
         processNextImportFile();
     }
 }
@@ -609,12 +709,15 @@ async function processNextImportFile() {
 function skipImportFile() { processNextImportFile(); }
 
 function finishImportSession(showSummary) {
+    const multi = importQueue.length > 1;
     document.getElementById('importPreview').style.display = 'none';
+    setImportStatus('');
     rawCSVLines = []; previewRows = []; importQueue = []; importFileIndex = -1;
-    if (showSummary && (importSession.imported || importSession.duplicates)) {
-        alert(`Imported ${importSession.imported} transaction${importSession.imported === 1 ? '' : 's'}` +
-            (importSession.duplicates ? ` — ${importSession.duplicates} duplicate${importSession.duplicates === 1 ? '' : 's'} skipped` : ''));
+    if (showSummary && multi && (importSession.imported || importSession.duplicates)) {
+        showToast(`All files done: ${importSession.imported} transaction${importSession.imported === 1 ? '' : 's'} imported` +
+            (importSession.duplicates ? `, ${importSession.duplicates} duplicate${importSession.duplicates === 1 ? '' : 's'} skipped` : ''));
     }
+    renderStatements();
 }
 
 function cancelImport() { finishImportSession(false); }
@@ -778,9 +881,9 @@ function applyMappingAndPreview() {
     const type = document.getElementById('mapType').value;
     const flip = document.getElementById('mapFlip').checked;
     if (columnMapping.date < 0 || columnMapping.description < 0)
-        return alert('Please map the Date and Description columns');
+        return showToast('Please map the Date and Description columns', 'error');
     if (columnMapping.amount < 0 && columnMapping.debit < 0)
-        return alert('Please map an Amount column, or the Money out / Money in columns');
+        return showToast('Please map an Amount column, or the Money out / Money in columns', 'error');
 
     const existingKeys = new Set(expenses.map(txKey));
     previewRows = [];
@@ -835,21 +938,37 @@ function toggleAllPreview(checked) { document.querySelectorAll('.preview-check')
 function confirmImport() {
     const account = (document.getElementById('mapAccount')?.value || '').trim() || 'Imported';
     if (account !== 'Imported') { lastAccountName = account; impStore.set('lastAccountName', account); }
+    const file = importQueue[importFileIndex];
+    const stmtId = uid();
     const batchSeen = new Set();
+    let imported = 0, dupes = 0;
+    const dates = [];
     document.querySelectorAll('.preview-check').forEach(cb => {
         const r = previewRows[+cb.dataset.i];
-        if (!cb.checked) { if (r.dupe) importSession.duplicates++; return; }
+        if (!cb.checked) { if (r.dupe) dupes++; return; }
         const key = txKey(r);
-        if (batchSeen.has(key)) { importSession.duplicates++; return; }
+        if (batchSeen.has(key)) { dupes++; return; }
         batchSeen.add(key);
         const catSel = document.querySelector(`.preview-cat[data-i="${cb.dataset.i}"]`);
         const category = catSel ? catSel.value : r.category;
-        expenses.unshift({id: uid(), desc: r.desc, amount: r.amount, category, forItem: '—', date: r.date, paidby: account});
+        expenses.unshift({id: uid(), desc: r.desc, amount: r.amount, category, forItem: '—', date: r.date, paidby: account, statementId: stmtId});
         rememberCategory(r.desc, category);
-        importSession.imported++;
+        dates.push(r.date);
+        imported++;
     });
+    importSession.imported += imported;
+    importSession.duplicates += dupes;
+    if (imported > 0) {
+        dates.sort();
+        statements.unshift({id: stmtId, fileName: file ? file.name : 'statement', account,
+            imported, from: dates[0], to: dates[dates.length - 1], at: new Date().toISOString().slice(0, 10)});
+        impStore.set('statements', statements);
+    }
+    showToast(`${file ? file.name : 'Statement'}: imported ${imported} transaction${imported === 1 ? '' : 's'}` +
+        (dupes ? `, ${dupes} duplicate${dupes === 1 ? '' : 's'} skipped` : ''), imported ? undefined : 'error');
     impStore.set('learnedCategories', learnedCategories);
     saveData();
+    renderStatements();
     processNextImportFile();
 }
 
@@ -877,10 +996,13 @@ function autoCategorize(desc) {
 
 async function handlePDFFile(file) {
     try {
+        setImportStatus(`Loading the PDF engine for ${file.name}…`);
+        await getPdfjs();
+        setImportStatus(`Extracting text from ${file.name}…`);
         await parsePDF(file);
         return true;
     } catch (err) {
-        alert(`${file.name}: PDF could not be processed (${err.message}). Scanned or image-only statements have no extractable text — use your bank's CSV export for those.`);
+        showToast(`${file.name}: PDF could not be processed (${err.message}). Scanned or image-only statements have no extractable text — use your bank's CSV export for those.`, 'error');
         return false;
     }
 }
@@ -944,7 +1066,7 @@ function saveAsset() {
     const name = document.getElementById('assetName').value.trim();
     const category = document.getElementById('assetCategory').value;
     const value = parseFloat(document.getElementById('assetValue').value);
-    if (!name || isNaN(value) || value < 0) return alert('Please enter an asset name and value');
+    if (!name || isNaN(value) || value < 0) return showToast('Please enter an asset name and value', 'error');
     assets.push({id: uid(), name, category, value});
     document.getElementById('assetName').value = '';
     document.getElementById('assetValue').value = '';
@@ -962,7 +1084,7 @@ function saveLiability() {
     const balance = parseFloat(document.getElementById('liabilityBalance').value);
     const rate = parseFloat(document.getElementById('liabilityRate').value) || 0;
     const minPayment = parseFloat(document.getElementById('liabilityMin').value) || 0;
-    if (!name || isNaN(balance) || balance <= 0) return alert('Please enter a debt name and balance');
+    if (!name || isNaN(balance) || balance <= 0) return showToast('Please enter a debt name and balance', 'error');
     liabilities.push({id: uid(), name, type, balance, rate, minPayment});
     ['liabilityName','liabilityBalance','liabilityRate','liabilityMin'].forEach(id => document.getElementById(id).value = '');
     saveNetWorthData();
@@ -1166,6 +1288,7 @@ renderTable();
 renderRecurring();
 renderAssets();
 renderLiabilities();
+renderStatements();
 showSection('expenses');
 </script>
 </body>
