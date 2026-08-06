@@ -21,6 +21,8 @@
     table { width: 100%; border-collapse: collapse; margin-top: 10px; }
     th, td { padding: 12px; text-align: left; border-bottom: 1px solid var(--border); }
     th { background: rgba(0,123,255,0.1); }
+    .pill { display: inline-block; font-size: 0.75rem; padding: 1px 8px; border-radius: 10px; background: var(--muted); color: var(--text); font-weight: 600; }
+    .ghost { background: #6c757d; }
     .recurring-badge { background: #28a745; color: white; font-size: 0.75rem; padding: 2px 6px; border-radius: 12px; }
     .summary { display: flex; gap: 30px; flex-wrap: wrap; align-items: center; }
     .total { font-size: 2rem; font-weight: bold; color: #28a745; }
@@ -68,17 +70,18 @@
             </div>
             <button onclick="saveExpense()">💾 Save Expense</button>
             <button onclick="cancelEdit()" style="background:#6c757d">Cancel</button>
-            <button onclick="importStatement()" style="background:#28a745">📥 Import Statement (CSV/PDF)</button>
-            <input type="file" id="fileInput" accept=".csv,.pdf,text/csv,application/pdf" style="display:none" onchange="handleFileSelected(event)">
+            <button onclick="importStatement()" style="background:#28a745">📥 Import Statements (CSV/PDF)</button>
+            <input type="file" id="fileInput" accept=".csv,.pdf,text/csv,application/pdf" multiple style="display:none" onchange="handleFileSelected(event)">
         </div>
 
         <!-- Import Preview -->
         <div class="card" id="importPreview" style="display:none;">
-            <h2>Import Preview - Column Mapping</h2>
+            <h2>Import Statement — Column Mapping</h2>
             <div id="mappingControls" class="mapping-box"></div>
             <button onclick="applyMappingAndPreview()">🔄 Apply Mapping</button>
-            <button onclick="confirmImport()">✅ Import Selected</button>
-            <button onclick="cancelImport()" style="background:#6c757d">Cancel</button>
+            <button onclick="confirmImport()">✅ Import Selected &amp; Continue</button>
+            <button onclick="skipImportFile()" style="background:#6c757d">Skip This File</button>
+            <button onclick="cancelImport()" style="background:#6c757d">Cancel All</button>
             <div class="preview-table">
                 <table id="previewTable"><thead></thead><tbody></tbody></table>
             </div>
@@ -540,39 +543,81 @@ function exportCSV() {
     URL.revokeObjectURL(a.href);
 }
 
-// ==================== IMPORT (CSV + PDF with Column Mapping) ====================
-let rawCSVLines = [];          // array of arrays (parsed cells)
-let columnMapping = { date: -1, description: -1, amount: -1 };
+// ==================== IMPORT (bank & credit card statements, multi-file) ====================
+let rawCSVLines = [];
+let columnMapping = { date: -1, description: -1, amount: -1, debit: -1, credit: -1 };
 let hasHeaderRow = true;
+let stmtTypeGuess = 'credit';
 let previewRows = [];
+let importQueue = [];
+let importFileIndex = -1;
+let importSession = { imported: 0, duplicates: 0 };
+
+const impStore = typeof store !== 'undefined' ? store : {
+    get: k => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+    set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+};
+let lastAccountName = impStore.get('lastAccountName') || '';
+let learnedCategories = impStore.get('learnedCategories') || {};
+
+// Ignore digits so "TIM HORTONS #2231" and "#0917" learn as one merchant
+function catKey(desc) { return String(desc).toUpperCase().replace(/\d+/g, '').replace(/\s+/g, ' ').trim(); }
+function rememberCategory(desc, category) { const k = catKey(desc); if (k) learnedCategories[k] = category; }
+function txKey(e) { return `${e.date}|${(+e.amount).toFixed(2)}|${String(e.desc).toUpperCase().replace(/\s+/g, ' ').trim()}`; }
 
 function importStatement() {
     document.getElementById('fileInput').value = '';
     document.getElementById('fileInput').click();
 }
 
-async function handleFileSelected(ev) {
-    const file = ev.target.files[0];
-    if (!file) return;
+function handleFileSelected(ev) {
+    const files = [...ev.target.files];
+    if (!files.length) return;
+    importQueue = files;
+    importFileIndex = -1;
+    importSession = { imported: 0, duplicates: 0 };
+    processNextImportFile();
+}
+
+async function processNextImportFile() {
+    importFileIndex++;
+    if (importFileIndex >= importQueue.length) return finishImportSession(true);
+    const file = importQueue[importFileIndex];
     try {
         if (/\.pdf$/i.test(file.name) || file.type === 'application/pdf') {
-            await parsePDF(file);
+            const handled = await handlePDFFile(file);
+            if (!handled) return processNextImportFile();
         } else {
-            const text = await file.text();
-            parseCSVText(text);
+            parseCSVText(await file.text());
             hasHeaderRow = guessHeaderRow();
+            autoDetectMapping();
         }
-        if (!rawCSVLines.length) return alert('No rows could be extracted from this file.');
-        autoDetectMapping();
+        if (!rawCSVLines.length) {
+            alert(`No rows could be extracted from ${file.name} — skipping it.`);
+            return processNextImportFile();
+        }
         showFullColumnMapping();
         applyMappingAndPreview();
         document.getElementById('importPreview').style.display = 'block';
         document.getElementById('importPreview').scrollIntoView({behavior: 'smooth'});
     } catch (err) {
-        console.error(err);
-        alert('Could not read file: ' + err.message);
+        alert(`Could not read ${file.name}: ${err.message} — skipping it.`);
+        processNextImportFile();
     }
 }
+
+function skipImportFile() { processNextImportFile(); }
+
+function finishImportSession(showSummary) {
+    document.getElementById('importPreview').style.display = 'none';
+    rawCSVLines = []; previewRows = []; importQueue = []; importFileIndex = -1;
+    if (showSummary && (importSession.imported || importSession.duplicates)) {
+        alert(`Imported ${importSession.imported} transaction${importSession.imported === 1 ? '' : 's'}` +
+            (importSession.duplicates ? ` — ${importSession.duplicates} duplicate${importSession.duplicates === 1 ? '' : 's'} skipped` : ''));
+    }
+}
+
+function cancelImport() { finishImportSession(false); }
 
 function parseCSVLine(line) {
     const cells = [];
@@ -580,10 +625,8 @@ function parseCSVLine(line) {
     for (let i = 0; i < line.length; i++) {
         const ch = line[i];
         if (inQuotes) {
-            if (ch === '"') {
-                if (line[i+1] === '"') { cur += '"'; i++; }
-                else inQuotes = false;
-            } else cur += ch;
+            if (ch === '"') { if (line[i+1] === '"') { cur += '"'; i++; } else inQuotes = false; }
+            else cur += ch;
         } else {
             if (ch === '"') inQuotes = true;
             else if (ch === ',') { cells.push(cur); cur = ''; }
@@ -595,16 +638,228 @@ function parseCSVLine(line) {
 }
 
 function parseCSVText(text) {
-    rawCSVLines = text.split(/\r?\n/)
-        .map(l => l.trim()).filter(Boolean)
-        .map(parseCSVLine)
-        .filter(cells => cells.some(c => c !== ''));
+    rawCSVLines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+        .map(parseCSVLine).filter(cells => cells.some(c => c !== ''));
 }
 
 function guessHeaderRow() {
     if (!rawCSVLines.length) return false;
-    // A header row has no cell that parses as an amount
     return !rawCSVLines[0].some(c => /^-?\$?\(?\d[\d,]*\.?\d*\)?-?$/.test(c.replace(/\s/g,'')));
+}
+
+function autoDetectMapping() {
+    const header = rawCSVLines[0].map(c => c.toLowerCase());
+    const maxCols = Math.max(...rawCSVLines.map(r => r.length));
+    // Try keywords in priority order and never reuse an already-assigned column —
+    // e.g. "Transaction Date" must not win the description slot over "Description"
+    const findIdx = (taken, ...words) => {
+        for (const w of words) {
+            const i = header.findIndex((h, idx) => !taken.includes(idx) && h.includes(w));
+            if (i >= 0) return i;
+        }
+        return -1;
+    };
+    let date = -1, desc = -1, amount = -1, debit = -1, credit = -1;
+    if (hasHeaderRow) {
+        date = findIdx([], 'date');
+        desc = findIdx([date], 'desc', 'narrat', 'detail', 'memo', 'payee', 'merchant', 'transaction');
+        debit = findIdx([date, desc], 'debit', 'withdraw', 'money out', 'paid out', 'money_out');
+        credit = findIdx([date, desc, debit], 'credit', 'deposit', 'money in', 'paid in', 'money_in');
+        if (debit < 0 || credit < 0) { debit = -1; credit = -1; }
+        if (debit < 0) amount = findIdx([date, desc], 'amount', 'value', 'total');
+    }
+    const sample = rawCSVLines[hasHeaderRow ? 1 : 0] || [];
+    if (date < 0) date = sample.findIndex(c => parseFlexibleDate(c));
+    if (amount < 0 && debit < 0) {
+        for (let i = maxCols - 1; i >= 0; i--) if (i !== date && parseAmount(sample[i]) !== null) { amount = i; break; }
+    }
+    if (desc < 0) desc = sample.findIndex((c, i) =>
+        i !== date && i !== amount && i !== debit && i !== credit && c && parseAmount(c) === null);
+    columnMapping = { date, description: desc, amount, debit, credit };
+    stmtTypeGuess = (debit >= 0 && credit >= 0) ? 'bank' : 'credit';
+}
+
+function showFullColumnMapping() {
+    const file = importQueue[importFileIndex];
+    const maxCols = Math.max(...rawCSVLines.map(r => r.length));
+    const sample = rawCSVLines[0] || [];
+    const colOptions = sel => Array.from({length: maxCols}, (_, i) =>
+        `<option value="${i}" ${sel === i ? 'selected' : ''}>Column ${i+1}${sample[i] ? ' — "' + esc(String(sample[i]).slice(0, 22)) + '"' : ''}</option>`).join('');
+    const accounts = [...new Set(expenses.map(e => e.paidby).filter(p => p && p !== '—'))];
+    document.getElementById('mappingControls').innerHTML = `
+        <div style="margin-bottom:8px"><strong>${esc(file ? file.name : 'statement')}</strong>
+            ${importQueue.length > 1 ? `<span class="pill">file ${importFileIndex + 1} of ${importQueue.length}</span>` : ''}</div>
+        <label>Account:
+            <input type="text" id="mapAccount" list="accountSuggestions" placeholder="TD Visa, Chequing..." value="${esc(lastAccountName)}" style="width:170px">
+        </label>
+        <datalist id="accountSuggestions">${accounts.map(a => `<option value="${esc(a)}">`).join('')}</datalist>
+        <label>Statement type:
+            <select id="mapType">
+                <option value="credit" ${stmtTypeGuess === 'credit' ? 'selected' : ''}>Credit card (purchases positive)</option>
+                <option value="bank" ${stmtTypeGuess === 'bank' ? 'selected' : ''}>Bank account (money out negative)</option>
+            </select>
+        </label>
+        <label><input type="checkbox" id="mapFlip"> Flip signs</label>
+        <br>
+        <label>Date: <select id="mapDate"><option value="-1">—</option>${colOptions(columnMapping.date)}</select></label>
+        <label>Description: <select id="mapDesc"><option value="-1">—</option>${colOptions(columnMapping.description)}</select></label>
+        <label>Amount: <select id="mapAmount"><option value="-1" ${columnMapping.amount < 0 ? 'selected' : ''}>—</option>${colOptions(columnMapping.amount)}</select></label>
+        <label>or Money out: <select id="mapDebit"><option value="-1" ${columnMapping.debit < 0 ? 'selected' : ''}>—</option>${colOptions(columnMapping.debit)}</select></label>
+        <label>Money in: <select id="mapCredit"><option value="-1" ${columnMapping.credit < 0 ? 'selected' : ''}>—</option>${colOptions(columnMapping.credit)}</select></label>
+        <label><input type="checkbox" id="mapHeader" ${hasHeaderRow ? 'checked' : ''}> First row is header</label>
+        <br><small>Payments, refunds and deposits are detected and left unchecked. Transactions already in the tracker are marked duplicate. If expenses show up as payments, toggle "Flip signs" and re-apply.</small>`;
+}
+
+function parseAmount(str) {
+    if (str === undefined || str === null) return null;
+    let s = String(str).replace(/[$,\s]/g, '');
+    if (!s) return null;
+    let neg = false;
+    if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1, -1); }
+    if (/-$/.test(s)) { neg = true; s = s.slice(0, -1); }
+    if (/^-/.test(s)) { neg = true; s = s.slice(1); }
+    if (!/^\d+(\.\d+)?$/.test(s)) return null;
+    const v = parseFloat(s);
+    return isNaN(v) ? null : (neg ? -v : v);
+}
+
+function parseFlexibleDate(str) {
+    if (!str) return null;
+    const s = String(str).trim();
+    let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (m) return isoDate(+m[1], +m[2], +m[3]);
+    m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+    if (m) {
+        let [a, b, y] = [+m[1], +m[2], +m[3]];
+        if (y < 100) y += 2000;
+        const [mo, day] = a > 12 ? [b, a] : [a, b];
+        return isoDate(y, mo, day);
+    }
+    m = s.match(/^([A-Za-z]{3,9})\.? (\d{1,2})(?:,? (\d{4}))?$/);
+    if (m) {
+        const mo = new Date(`${m[1]} 1, 2000`).getMonth();
+        if (!isNaN(mo)) return isoDate(m[3] ? +m[3] : new Date().getFullYear(), mo + 1, +m[2]);
+    }
+    return null;
+}
+
+function isoDate(y, mo, d) {
+    if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+    return `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+}
+
+function applyMappingAndPreview() {
+    columnMapping = {
+        date: +document.getElementById('mapDate').value,
+        description: +document.getElementById('mapDesc').value,
+        amount: +document.getElementById('mapAmount').value,
+        debit: +document.getElementById('mapDebit').value,
+        credit: +document.getElementById('mapCredit').value
+    };
+    hasHeaderRow = document.getElementById('mapHeader').checked;
+    const type = document.getElementById('mapType').value;
+    const flip = document.getElementById('mapFlip').checked;
+    if (columnMapping.date < 0 || columnMapping.description < 0)
+        return alert('Please map the Date and Description columns');
+    if (columnMapping.amount < 0 && columnMapping.debit < 0)
+        return alert('Please map an Amount column, or the Money out / Money in columns');
+
+    const existingKeys = new Set(expenses.map(txKey));
+    previewRows = [];
+    (hasHeaderRow ? rawCSVLines.slice(1) : rawCSVLines).forEach(cells => {
+        const date = parseFlexibleDate(cells[columnMapping.date]);
+        const desc = (cells[columnMapping.description] || '').trim();
+        if (!date || !desc) return;
+        // Normalize to expense-positive: >0 spend, <0 payment/refund/deposit
+        let signed = null;
+        if (columnMapping.debit >= 0) {
+            const out = parseAmount(cells[columnMapping.debit]);
+            const inn = columnMapping.credit >= 0 ? parseAmount(cells[columnMapping.credit]) : null;
+            if (out !== null && out !== 0) signed = Math.abs(out);
+            else if (inn !== null && inn !== 0) signed = -Math.abs(inn);
+        } else {
+            const a = parseAmount(cells[columnMapping.amount]);
+            if (a !== null && a !== 0) signed = type === 'bank' ? -a : a;
+        }
+        if (signed === null || signed === 0) return;
+        if (flip) signed = -signed;
+        const amount = Math.abs(signed);
+        const isPayment = signed < 0;
+        const dupe = existingKeys.has(txKey({date, amount, desc}));
+        previewRows.push({date, desc, amount, category: autoCategorize(desc), isPayment, dupe});
+    });
+
+    const thead = document.querySelector('#previewTable thead');
+    const tbody = document.querySelector('#previewTable tbody');
+    thead.innerHTML = '<tr><th><input type="checkbox" checked onchange="toggleAllPreview(this.checked)"></th><th>Date</th><th>Description</th><th class="num">Amount</th><th>Category</th><th>Status</th></tr>';
+    tbody.innerHTML = '';
+    if (!previewRows.length) {
+        tbody.innerHTML = '<tr><td colspan="6">No valid transactions found with this mapping — adjust the columns above and re-apply.</td></tr>';
+        return;
+    }
+    const catOpts = allCategories();
+    previewRows.forEach((r, i) => {
+        const status = r.dupe ? '<span class="pill">duplicate</span>'
+            : r.isPayment ? '<span class="pill">payment / credit</span>' : '';
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td><input type="checkbox" data-i="${i}" class="preview-check" ${r.dupe || r.isPayment ? '' : 'checked'}></td>
+            <td>${esc(r.date)}</td><td>${esc(r.desc)}</td><td class="num">${money(r.amount)}</td>
+            <td><select data-i="${i}" class="preview-cat">${catOpts.map(c =>
+                `<option value="${esc(c)}" ${c === r.category ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></td>
+            <td>${status}</td>`;
+        tbody.appendChild(row);
+    });
+}
+
+function toggleAllPreview(checked) { document.querySelectorAll('.preview-check').forEach(cb => { cb.checked = checked; }); }
+
+function confirmImport() {
+    const account = (document.getElementById('mapAccount')?.value || '').trim() || 'Imported';
+    if (account !== 'Imported') { lastAccountName = account; impStore.set('lastAccountName', account); }
+    const batchSeen = new Set();
+    document.querySelectorAll('.preview-check').forEach(cb => {
+        const r = previewRows[+cb.dataset.i];
+        if (!cb.checked) { if (r.dupe) importSession.duplicates++; return; }
+        const key = txKey(r);
+        if (batchSeen.has(key)) { importSession.duplicates++; return; }
+        batchSeen.add(key);
+        const catSel = document.querySelector(`.preview-cat[data-i="${cb.dataset.i}"]`);
+        const category = catSel ? catSel.value : r.category;
+        expenses.unshift({id: uid(), desc: r.desc, amount: r.amount, category, forItem: '—', date: r.date, paidby: account});
+        rememberCategory(r.desc, category);
+        importSession.imported++;
+    });
+    impStore.set('learnedCategories', learnedCategories);
+    saveData();
+    processNextImportFile();
+}
+
+function autoCategorize(desc) {
+    const learned = learnedCategories[catKey(desc)];
+    if (learned) return learned;
+    const d = desc.toUpperCase();
+    if (/TIM HORT|STARBUCKS|COFFEE|CAFE/.test(d)) return 'Coffee';
+    if (/RESTAURANT|DINING|MCDONALD|BURGER|PIZZA|SUBWAY|WENDY|KFC|A&W|DOORDASH|UBER ?EATS|SKIP/.test(d)) return 'Dining Out';
+    if (/GROCERY|SUPERSTORE|WALMART|COSTCO|SAFEWAY|SOBEYS|LOBLAW|NO ?FRILLS|FRESHCO|SAVE.ON/.test(d)) return 'Groceries';
+    if (/SHELL|PETRO|ESSO|CHEVRON|HUSKY|MOBIL|GAS|FUEL/.test(d)) return 'Gas';
+    if (/MORTGAGE/.test(d)) return 'Mortgage Payments';
+    if (/RENT/.test(d)) return 'Rent';
+    if (/HYDRO|ELECTRIC|WATER|ENBRIDGE|FORTIS|UTILIT/.test(d)) return 'Utilities';
+    if (/NETFLIX|SPOTIFY|DISNEY|PRIME|CRAVE|APPLE\.COM|SUBSCRIPTION|YOUTUBE/.test(d)) return 'Subscriptions';
+    if (/ROGERS|BELL|TELUS|FIDO|KOODO|FREEDOM|VERIZON|T-MOBILE|AT&T/.test(d)) return 'Cell Phone';
+    if (/PHARMA|SHOPPERS|DRUG|DENTAL|CLINIC|MEDICAL/.test(d)) return 'Healthcare';
+    if (/INSURANCE/.test(d)) return 'Insurance';
+    if (/UBER|LYFT|TRANSIT|TAXI|PARKING/.test(d)) return 'Transport';
+    if (/CINEMA|CINEPLEX|THEATRE|MOVIE|STEAM|PLAYSTATION|XBOX|NINTENDO/.test(d)) return 'Entertainment';
+    if (/AMAZON|AMZN|EBAY|BEST ?BUY|IKEA|HOME ?DEPOT|CANADIAN ?TIRE/.test(d)) return 'Shopping';
+    if (/TUITION|SCHOOL|UNIVERSITY|COLLEGE|COURSE/.test(d)) return 'Education';
+    return 'Other';
+}
+
+async function handlePDFFile(file) {
+    await parsePDF(file);
+    return true;
 }
 
 async function parsePDF(file) {
@@ -644,176 +899,8 @@ async function parsePDF(file) {
         if (desc) rawCSVLines.push([dm[0], desc, amount]);
     });
     hasHeaderRow = false;
-    columnMapping = { date: 0, description: 1, amount: 2 };
-}
-
-function autoDetectMapping() {
-    const header = rawCSVLines[0].map(c => c.toLowerCase());
-    const maxCols = Math.max(...rawCSVLines.map(r => r.length));
-    const find = (...words) => header.findIndex(h => words.some(w => h.includes(w)));
-
-    let date = -1, desc = -1, amount = -1;
-    if (hasHeaderRow) {
-        date = find('date');
-        desc = find('desc', 'narrat', 'detail', 'memo', 'payee', 'merchant', 'transaction');
-        amount = find('amount', 'debit', 'value', 'total');
-    }
-    // Content-based fallback on the first data row
-    const sample = rawCSVLines[hasHeaderRow ? 1 : 0] || [];
-    if (date < 0) date = sample.findIndex(c => parseFlexibleDate(c));
-    if (amount < 0) {
-        for (let i = maxCols - 1; i >= 0; i--) {
-            if (i !== date && parseAmount(sample[i]) !== null) { amount = i; break; }
-        }
-    }
-    if (desc < 0) desc = sample.findIndex((c, i) => i !== date && i !== amount && c && parseAmount(c) === null);
-    columnMapping = { date, description: desc, amount };
-}
-
-function showFullColumnMapping() {
-    const maxCols = Math.max(...rawCSVLines.map(r => r.length));
-    const sample = rawCSVLines[0] || [];
-    const colOptions = sel => Array.from({length: maxCols}, (_, i) =>
-        `<option value="${i}" ${sel === i ? 'selected' : ''}>Column ${i+1}${sample[i] ? ' — "' + esc(String(sample[i]).slice(0, 25)) + '"' : ''}</option>`
-    ).join('');
-    document.getElementById('mappingControls').innerHTML = `
-        <label>Date: <select id="mapDate"><option value="-1">—</option>${colOptions(columnMapping.date)}</select></label>
-        <label>Description: <select id="mapDesc"><option value="-1">—</option>${colOptions(columnMapping.description)}</select></label>
-        <label>Amount: <select id="mapAmount"><option value="-1">—</option>${colOptions(columnMapping.amount)}</select></label>
-        <label><input type="checkbox" id="mapHeader" ${hasHeaderRow ? 'checked' : ''}> First row is header</label>
-        <br><small>Amounts are imported as positive expenses; uncheck rows you don't want (e.g. payments/credits).</small>
-    `;
-}
-
-function parseAmount(str) {
-    if (str === undefined || str === null) return null;
-    let s = String(str).replace(/[$,\s]/g, '');
-    if (!s) return null;
-    let neg = false;
-    if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1, -1); }
-    if (/-$/.test(s)) { neg = true; s = s.slice(0, -1); }
-    if (/^-/.test(s)) { neg = true; s = s.slice(1); }
-    if (!/^\d+(\.\d+)?$/.test(s)) return null;
-    const v = parseFloat(s);
-    return isNaN(v) ? null : (neg ? -v : v);
-}
-
-function parseFlexibleDate(str) {
-    if (!str) return null;
-    const s = String(str).trim();
-    let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-    if (m) return isoDate(+m[1], +m[2], +m[3]);
-    m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
-    if (m) {
-        let [a, b, y] = [+m[1], +m[2], +m[3]];
-        if (y < 100) y += 2000;
-        // Ambiguous: assume MM/DD unless first part can't be a month
-        const [mo, day] = a > 12 ? [b, a] : [a, b];
-        return isoDate(y, mo, day);
-    }
-    m = s.match(/^([A-Za-z]{3,9})\.? (\d{1,2})(?:,? (\d{4}))?$/);
-    if (m) {
-        const mo = new Date(`${m[1]} 1, 2000`).getMonth();
-        if (!isNaN(mo)) return isoDate(m[3] ? +m[3] : new Date().getFullYear(), mo + 1, +m[2]);
-    }
-    return null;
-}
-
-function isoDate(y, mo, d) {
-    if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
-    return `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-}
-
-function applyMappingAndPreview() {
-    const mapDate = document.getElementById('mapDate');
-    if (mapDate) {
-        columnMapping = {
-            date: +mapDate.value,
-            description: +document.getElementById('mapDesc').value,
-            amount: +document.getElementById('mapAmount').value
-        };
-        hasHeaderRow = document.getElementById('mapHeader').checked;
-    }
-    if (columnMapping.date < 0 || columnMapping.description < 0 || columnMapping.amount < 0) {
-        return alert('Please map Date, Description and Amount columns');
-    }
-
-    previewRows = [];
-    const dataRows = hasHeaderRow ? rawCSVLines.slice(1) : rawCSVLines;
-    dataRows.forEach(cells => {
-        const date = parseFlexibleDate(cells[columnMapping.date]);
-        const desc = (cells[columnMapping.description] || '').trim();
-        const amt = parseAmount(cells[columnMapping.amount]);
-        if (!date || !desc || amt === null || amt === 0) return;
-        previewRows.push({date, desc, amount: Math.abs(amt), category: autoCategorize(desc), checked: amt !== 0});
-    });
-
-    const thead = document.querySelector('#previewTable thead');
-    const tbody = document.querySelector('#previewTable tbody');
-    thead.innerHTML = '<tr><th><input type="checkbox" id="checkAll" checked onchange="toggleAllPreview(this.checked)"></th><th>Date</th><th>Description</th><th>Amount</th><th>Category</th></tr>';
-    tbody.innerHTML = '';
-    if (!previewRows.length) {
-        tbody.innerHTML = '<tr><td colspan="5">No valid transactions found with this mapping.</td></tr>';
-        return;
-    }
-    const catOpts = allCategories();
-    previewRows.forEach((r, i) => {
-        const row = document.createElement('tr');
-        row.innerHTML = `
-            <td><input type="checkbox" data-i="${i}" class="preview-check" ${r.checked ? 'checked' : ''}></td>
-            <td>${esc(r.date)}</td>
-            <td>${esc(r.desc)}</td>
-            <td>${money(r.amount)}</td>
-            <td><select data-i="${i}" class="preview-cat">${catOpts.map(c =>
-                `<option value="${esc(c)}" ${c === r.category ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></td>
-        `;
-        tbody.appendChild(row);
-    });
-}
-
-function toggleAllPreview(checked) {
-    document.querySelectorAll('.preview-check').forEach(cb => { cb.checked = checked; });
-}
-
-function confirmImport() {
-    let count = 0;
-    document.querySelectorAll('.preview-check').forEach(cb => {
-        if (!cb.checked) return;
-        const r = previewRows[+cb.dataset.i];
-        const catSel = document.querySelector(`.preview-cat[data-i="${cb.dataset.i}"]`);
-        expenses.unshift({id: uid(), desc: r.desc, amount: r.amount,
-            category: catSel ? catSel.value : r.category, forItem: '—', date: r.date, paidby: 'Imported'});
-        count++;
-    });
-    cancelImport();
-    saveData();
-    alert(`Imported ${count} transaction${count === 1 ? '' : 's'}`);
-}
-
-function cancelImport() {
-    document.getElementById('importPreview').style.display = 'none';
-    rawCSVLines = [];
-    previewRows = [];
-}
-
-function autoCategorize(desc) {
-    const d = desc.toUpperCase();
-    if (/TIM HORT|STARBUCKS|COFFEE|CAFE/.test(d)) return 'Coffee';
-    if (/RESTAURANT|DINING|MCDONALD|BURGER|PIZZA|SUBWAY|WENDY|KFC|A&W|DOORDASH|UBER ?EATS|SKIP/.test(d)) return 'Dining Out';
-    if (/GROCERY|SUPERSTORE|WALMART|COSTCO|SAFEWAY|SOBEYS|LOBLAW|NO ?FRILLS|FRESHCO|SAVE.ON/.test(d)) return 'Groceries';
-    if (/SHELL|PETRO|ESSO|CHEVRON|HUSKY|MOBIL|GAS|FUEL/.test(d)) return 'Gas';
-    if (/MORTGAGE/.test(d)) return 'Mortgage Payments';
-    if (/RENT/.test(d)) return 'Rent';
-    if (/HYDRO|ELECTRIC|WATER|ENBRIDGE|FORTIS|UTILIT/.test(d)) return 'Utilities';
-    if (/NETFLIX|SPOTIFY|DISNEY|PRIME|CRAVE|APPLE\.COM|SUBSCRIPTION|YOUTUBE/.test(d)) return 'Subscriptions';
-    if (/ROGERS|BELL|TELUS|FIDO|KOODO|FREEDOM|VERIZON|T-MOBILE|AT&T/.test(d)) return 'Cell Phone';
-    if (/PHARMA|SHOPPERS|DRUG|DENTAL|CLINIC|MEDICAL/.test(d)) return 'Healthcare';
-    if (/INSURANCE/.test(d)) return 'Insurance';
-    if (/UBER|LYFT|TRANSIT|TAXI|PARKING/.test(d)) return 'Transport';
-    if (/CINEMA|CINEPLEX|THEATRE|MOVIE|STEAM|PLAYSTATION|XBOX|NINTENDO/.test(d)) return 'Entertainment';
-    if (/AMAZON|AMZN|EBAY|BEST ?BUY|IKEA|HOME ?DEPOT|CANADIAN ?TIRE/.test(d)) return 'Shopping';
-    if (/TUITION|SCHOOL|UNIVERSITY|COLLEGE|COURSE/.test(d)) return 'Education';
-    return 'Other';
+    columnMapping = { date: 0, description: 1, amount: 2, debit: -1, credit: -1 };
+    stmtTypeGuess = 'credit';
 }
 
 // ==================== NET WORTH & DEBT ====================

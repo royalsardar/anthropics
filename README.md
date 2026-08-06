@@ -21,11 +21,14 @@ Two builds are included:
 - Live search filter and CSV export
 
 ### 📥 Statement Import (CSV + PDF)
-- Import bank/credit-card statements from CSV or text-based PDF files
-- Automatic column detection with a manual **column-mapping UI** (date / description / amount, header-row toggle)
+- **Upload multiple bank and credit-card statements at once** — each file gets its own mapping/preview step
+- Statement-type aware: credit card (purchases positive) vs. bank account (money out negative), with a "flip signs" toggle for banks that export the other way, and support for **separate "money out" / "money in" columns**
+- **Payments, refunds and deposits are detected automatically** and left unchecked so they don't inflate your spending
+- **Duplicate detection**: transactions already in the tracker (same date + amount + description) are flagged and skipped, so re-uploading an overlapping statement is safe
+- **Account tagging**: label each statement ("TD Visa", "Chequing"…) and the account shows in the Paid By column
+- Automatic column detection with a manual **column-mapping UI** (date / description / amount or debit+credit, header-row toggle)
 - Handles quoted CSV fields, `$1,234.56`, negative, trailing-minus, and `(parenthesized)` amounts, and multiple date formats (ISO, `MM/DD/YYYY`, `DD/MM/YYYY`, `Jul 12, 2026`)
-- Auto-categorization from merchant keywords (editable per row before import)
-- Preview table with per-row checkboxes so you can skip payments/credits
+- Auto-categorization from merchant keywords, **and it learns**: when you correct a category before importing, future imports of that merchant (ignoring store numbers) use your choice
 
 ### 💰 Net Worth & Debt
 - Track assets (cash, investments, real estate, vehicles…) and liabilities (with APR and minimum payment)
