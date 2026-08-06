@@ -6,10 +6,10 @@ Two builds are included:
 
 | File | Charts | PDF import | Extras |
 |------|--------|------------|--------|
-| `index.html` | Chart.js (CDN) | Yes (pdf.js CDN) | Full version |
-| `test.html` | Hand-rolled canvas (no CDN, works offline) | No (CSV only) | One-click sample data loader + "clear all" button for quick testing |
+| `index.html` | Chart.js (CDN) | Yes (pdf.js from CDN) | Full version, small file |
+| `test.html` | Hand-rolled canvas (no CDN) | Yes (pdf.js embedded, ~2 MB file) | Works fully offline + one-click sample data loader for quick testing |
 
-`test.html` is fully self-contained — no network access needed — so it also works in restricted environments that block CDNs.
+`test.html` is fully self-contained — no network access needed — so it also works offline and in restricted environments that block CDNs.
 
 ## Features
 
@@ -27,7 +27,8 @@ Two builds are included:
 - **Duplicate detection**: transactions already in the tracker (same date + amount + description) are flagged and skipped, so re-uploading an overlapping statement is safe
 - **Account tagging**: label each statement ("TD Visa", "Chequing"…) and the account shows in the Paid By column
 - Automatic column detection with a manual **column-mapping UI** (date / description / amount or debit+credit, header-row toggle)
-- Handles quoted CSV fields, `$1,234.56`, negative, trailing-minus, and `(parenthesized)` amounts, and multiple date formats (ISO, `MM/DD/YYYY`, `DD/MM/YYYY`, `Jul 12, 2026`)
+- Handles quoted CSV fields, `$1,234.56`, negative, trailing-minus, `(parenthesized)` and `12.34 CR` amounts, and multiple date formats (ISO, `MM/DD/YYYY`, `DD/MM/YYYY`, `Jul 12, 2026`, and year-less `Jul 12` / `07/12` with statement-year inference)
+- **PDF statements** (text-based, not scanned): transaction lines are reconstructed from the page layout; card-style double dates (transaction + posting) are collapsed and bank-style trailing running balances are ignored
 - Auto-categorization from merchant keywords, **and it learns**: when you correct a category before importing, future imports of that merchant (ignoring store numbers) use your choice
 
 ### 💰 Net Worth & Debt

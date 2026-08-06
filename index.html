@@ -715,6 +715,7 @@ function parseAmount(str) {
     let s = String(str).replace(/[$,\s]/g, '');
     if (!s) return null;
     let neg = false;
+    if (/cr$/i.test(s)) { neg = true; s = s.slice(0, -2); }   // "12.34 CR" = credit
     if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1, -1); }
     if (/-$/.test(s)) { neg = true; s = s.slice(0, -1); }
     if (/^-/.test(s)) { neg = true; s = s.slice(1); }
@@ -735,12 +736,29 @@ function parseFlexibleDate(str) {
         const [mo, day] = a > 12 ? [b, a] : [a, b];
         return isoDate(y, mo, day);
     }
+    m = s.match(/^(\d{1,2})[\/\-](\d{1,2})$/);               // "07/12" — PDF statements often omit the year
+    if (m) {
+        const [a, b] = [+m[1], +m[2]];
+        const [mo, day] = a > 12 ? [b, a] : [a, b];
+        return inferYear(mo, day);
+    }
     m = s.match(/^([A-Za-z]{3,9})\.? (\d{1,2})(?:,? (\d{4}))?$/);
     if (m) {
         const mo = new Date(`${m[1]} 1, 2000`).getMonth();
-        if (!isNaN(mo)) return isoDate(m[3] ? +m[3] : new Date().getFullYear(), mo + 1, +m[2]);
+        if (isNaN(mo)) return null;
+        return m[3] ? isoDate(+m[3], mo + 1, +m[2]) : inferYear(mo + 1, +m[2]);
     }
     return null;
+}
+
+// Year-less statement dates: assume this year unless that lands well in the future
+// (a December statement imported in January), then use last year.
+function inferYear(mo, day) {
+    const now = new Date();
+    const d = isoDate(now.getFullYear(), mo, day);
+    if (!d) return null;
+    if (new Date(d + 'T00:00:00') - now > 40 * 86400000) return isoDate(now.getFullYear() - 1, mo, day);
+    return d;
 }
 
 function isoDate(y, mo, d) {
@@ -858,8 +876,13 @@ function autoCategorize(desc) {
 }
 
 async function handlePDFFile(file) {
-    await parsePDF(file);
-    return true;
+    try {
+        await parsePDF(file);
+        return true;
+    } catch (err) {
+        alert(`${file.name}: PDF could not be processed (${err.message}). Scanned or image-only statements have no extractable text — use your bank's CSV export for those.`);
+        return false;
+    }
 }
 
 async function parsePDF(file) {
@@ -880,20 +903,25 @@ async function parsePDF(file) {
             if (key === null) { key = y; byY.set(key, []); }
             byY.get(key).push({x: item.transform[4], str: item.str});
         });
-        [...byY.entries()].sort((a,b) => b[0] - a[0]).forEach(([, items]) => {
-            lines.push(items.sort((a,b) => a.x - b.x).map(i => i.str).join(' ').replace(/\s+/g, ' ').trim());
+        [...byY.entries()].sort((a, b) => b[0] - a[0]).forEach(([, items]) => {
+            lines.push(items.sort((a, b) => a.x - b.x).map(i => i.str).join(' ').replace(/\s+/g, ' ').trim());
         });
     }
-    // Extract transaction-looking lines: a date + a trailing amount
-    const dateRe = /(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|[A-Z][a-z]{2,8}\.? \d{1,2}(?:,? \d{4})?)/;
-    const amtRe = /-?\$?\(?\d{1,3}(?:,\d{3})*\.\d{2}\)?-?/g;
+    // Transaction lines start with a date and contain at least one amount
+    const dateRe = /^(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?|[A-Z][a-z]{2,8}\.? \d{1,2}(?:,? \d{4})?)\b/;
+    const amtRe = /-?\$?\(?\d{1,3}(?:,\d{3})*\.\d{2}\)?(?: ?CR)?-?/gi;
     rawCSVLines = [];
     lines.forEach(line => {
         const dm = line.match(dateRe);
-        const amounts = line.match(amtRe);
-        if (!dm || !amounts) return;
-        const amount = amounts[amounts.length - 1];
-        let desc = line.replace(dm[0], '');
+        if (!dm) return;
+        const amounts = [...line.matchAll(amtRe)].map(x => x[0]);
+        if (!amounts.length) return;
+        // Bank statements print a running balance after the amount — with 2+ numbers, take the second-to-last
+        const amount = amounts.length >= 2 ? amounts[amounts.length - 2] : amounts[0];
+        let desc = line.slice(dm[0].length).trim();
+        // Card statements often show two dates (transaction + posting) — drop the second
+        const dm2 = desc.match(dateRe);
+        if (dm2) desc = desc.slice(dm2[0].length).trim();
         amounts.forEach(a => { desc = desc.replace(a, ''); });
         desc = desc.replace(/\s+/g, ' ').trim();
         if (desc) rawCSVLines.push([dm[0], desc, amount]);
