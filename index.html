@@ -156,6 +156,7 @@
                 <button onclick="exportCSV()" style="float:right;background:#6c757d">📤 Export CSV</button>
             </h2>
             <input type="text" id="search" placeholder="Search..." onkeyup="filterExpenses()" style="width:100%">
+            <div id="balanceCleanup" class="import-status warn" style="display:none;margin:6px 0 10px"></div>
             <table id="expensesTable">
                 <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>For</th><th>Amount</th><th>Paid By</th><th>Actions</th></tr></thead>
                 <tbody></tbody>
@@ -546,6 +547,7 @@ function renderTable() {
     const tbody = document.querySelector('#expensesTable tbody');
     const q = (document.getElementById('search').value || '').toLowerCase();
     tbody.innerHTML = '';
+    renderBalanceCleanup();
     const sorted = [...expenses].sort((a,b) => new Date(b.date) - new Date(a.date));
     sorted.forEach(exp => {
         const hay = `${exp.date} ${exp.desc} ${exp.category} ${exp.forItem} ${exp.paidby} ${exp.amount}`.toLowerCase();
@@ -592,6 +594,27 @@ function changeExpenseCategory(id, sel) {
     impStore.set('learnedCategories', learnedCategories);
     saveData();
     showToast(`${exp.desc}: category set to ${exp.category}`);
+}
+
+// Opening / closing balance lines that slipped into the expenses list (imports made before the
+// balance filter existed, or a CSV that labelled them unusually) — offer a one-click cleanup.
+function balanceRowsInExpenses() { return expenses.filter(e => BALANCE_ROW_RE.test(e.desc)); }
+function renderBalanceCleanup() {
+    const el = document.getElementById('balanceCleanup');
+    if (!el) return;
+    const rows = balanceRowsInExpenses();
+    el.style.display = rows.length ? 'block' : 'none';
+    if (rows.length) el.innerHTML = `⚠️ ${rows.length} row${rows.length === 1 ? '' : 's'} look${rows.length === 1 ? 's' : ''} like an opening/closing balance rather than an expense (${money(rows.reduce((s, e) => s + e.amount, 0))} in total). ` +
+        `<button class="small" style="margin-left:6px" onclick="removeBalanceRows(this)">Remove ${rows.length === 1 ? 'it' : 'them'}</button>`;
+}
+function removeBalanceRows(btn) {
+    needsConfirm('balanceRows', btn, () => {
+        const ids = new Set(balanceRowsInExpenses().map(e => e.id));
+        expenses = expenses.filter(e => !ids.has(e.id));
+        saveData();
+        renderStatements();
+        showToast(`Removed ${ids.size} balance row${ids.size === 1 ? '' : 's'}`);
+    }, 'Remove?');
 }
 
 function filterExpenses() { renderTable(); }
@@ -856,6 +879,10 @@ function catKey(desc) { return String(desc).toUpperCase().replace(/\d+/g, '').re
 function rememberCategory(desc, category) { const k = catKey(desc); if (k) learnedCategories[k] = category; }
 function txKey(e) { return `${e.date}|${(+e.amount).toFixed(2)}|${String(e.desc).toUpperCase().replace(/\s+/g, ' ').trim()}`; }
 
+// Statement lines that are balances or column totals, never expenses. Used by every import path
+// (CSV and PDF) and by the cleanup notice for rows that were imported before this filter existed.
+const BALANCE_ROW_RE = /\b(?:opening|closing|beginning|ending|previous|new|statement|current|starting)\s+balance\b|\bbalance\s+(?:forward|brought\s+forward|carried\s+forward|b\/?f\b|c\/?f\b|as\s+of\b)|^balance$|^total\s+(?:money\s+)?(?:in|out|debits?|credits?|withdrawals?|deposits?|purchases|payments)\b/i;
+
 function importStatement() {
     document.getElementById('fileInput').value = '';
     document.getElementById('fileInput').click();
@@ -1102,6 +1129,7 @@ function applyMappingAndPreview() {
         const date = parseFlexibleDate(cells[columnMapping.date]);
         const desc = (cells[columnMapping.description] || '').trim();
         if (!date || !desc) return;
+        const isBalance = BALANCE_ROW_RE.test(desc);   // opening/closing balance lines are not spending
         // Normalize to expense-positive: >0 spend, <0 payment/refund/deposit
         let signed = null;
         if (columnMapping.debit >= 0) {
@@ -1118,7 +1146,7 @@ function applyMappingAndPreview() {
         const amount = Math.abs(signed);
         const isPayment = signed < 0;
         const dupe = existingKeys.has(txKey({date, amount, desc}));
-        previewRows.push({date, desc, amount, category: autoCategorize(desc), isPayment, dupe});
+        previewRows.push({date, desc, amount, category: autoCategorize(desc), isPayment, isBalance, dupe});
     });
 
     const thead = document.querySelector('#previewTable thead');
@@ -1131,10 +1159,11 @@ function applyMappingAndPreview() {
     }
     previewRows.forEach((r, i) => {
         const status = r.dupe ? '<span class="pill">duplicate</span>'
+            : r.isBalance ? '<span class="pill">balance row</span>'
             : r.isPayment ? '<span class="pill">payment / credit</span>' : '';
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td><input type="checkbox" data-i="${i}" class="preview-check" ${r.dupe || r.isPayment ? '' : 'checked'}></td>
+            <td><input type="checkbox" data-i="${i}" class="preview-check" ${r.dupe || r.isPayment || r.isBalance ? '' : 'checked'}></td>
             <td>${esc(r.date)}</td><td>${esc(r.desc)}</td><td class="num">${money(r.amount)}</td>
             <td><select data-i="${i}" class="preview-cat">${categoryOptionsHTML(r.category)}</select></td>
             <td>${status}</td>`;
@@ -1244,7 +1273,7 @@ async function parsePDF(file) {
     const dateRe = /^(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?|[A-Z][a-z]{2,8}\.? \d{1,2}(?:,? \d{4})?|\d{1,2}[ \-\/][A-Z][a-z]{2,8}\.?(?:[ \-\/,]+\d{2,4})?)\b/;
     const amtRe = /-?\$?\(?\d{1,3}(?:,\d{3})*\.\d{2}\)?(?: ?CR)?-?/gi;
     const amtItemRe = /^-?\$?\(?\d{1,3}(?:,\d{3})*\.\d{2}\)?(?: ?CR)?-?$/i;
-    const balanceRowRe = /opening balance|closing balance|balance (brought|carried) forward|previous balance|new balance|^balance$/i;
+    const balanceRowRe = BALANCE_ROW_RE;
     // Bank statements print separate "Money out" / "Money in" (withdrawals / deposits, debit / credit)
     // columns of positive numbers. Read the header row to learn where each column sits, then place
     // every number on a transaction line into the nearest column.

@@ -26,6 +26,7 @@ Two builds are included:
 - **Upload multiple bank and credit-card statements at once** — each file gets its own mapping/preview step
 - Statement-type aware: credit card (purchases positive) vs. bank account (money out negative), with a "flip signs" toggle for banks that export the other way, and support for **separate "money out" / "money in" columns**
 - **Payments, refunds and deposits are detected automatically** and left unchecked so they don't inflate your spending
+- **Opening / closing balance and column-total lines are never treated as expenses**: PDF import drops them, CSV import shows them unchecked as "balance row", and if any slipped in from an earlier import the All Expenses card offers a one-click cleanup
 - **Duplicate detection**: transactions already in the tracker (same date + amount + description) are flagged and skipped, so re-uploading an overlapping statement is safe
 - **Account tagging**: label each statement ("TD Visa", "Chequing"…) and the account shows in the Paid By column
 - **Imported Statements list**: every import is logged with file name, account, transaction count, date range, and import date — remove a statement to remove its transactions too
