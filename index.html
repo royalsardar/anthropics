@@ -269,7 +269,7 @@ const BASE_CATEGORIES = [
     'Food','Dining Out','Coffee','Groceries','Home Expenses','Rent','Mortgage Payments','Property Tax',
     'Home Repair and Maintenance','Utilities','Transport','Gas','Car Repair and Maintenance','Entertainment',
     'Healthcare','Shopping','Insurance','Home Insurance','Life Insurance','Vehicle Insurance','Other Insurance',
-    'Education','Subscriptions','Cell Phone','Other'
+    'Education','Subscriptions','Cell Phone','Transfers','Other'
 ];
 
 let idSeq = Date.now();
@@ -1160,7 +1160,7 @@ function applyMappingAndPreview() {
     previewRows.forEach((r, i) => {
         const status = r.dupe ? '<span class="pill">duplicate</span>'
             : r.isBalance ? '<span class="pill">balance row</span>'
-            : r.isPayment ? '<span class="pill">payment / credit</span>' : '';
+            : r.isPayment ? '<span class="pill">' + esc(creditLabel(r.desc, type)) + '</span>' : '';
         const row = document.createElement('tr');
         row.innerHTML = `
             <td><input type="checkbox" data-i="${i}" class="preview-check" ${r.dupe || r.isPayment || r.isBalance ? '' : 'checked'}></td>
@@ -1169,6 +1169,14 @@ function applyMappingAndPreview() {
             <td>${status}</td>`;
         tbody.appendChild(row);
     });
+}
+
+// Why a money-in row is left unchecked
+function creditLabel(desc, type) {
+    if (/e-?transfer|etransfer|interac/i.test(desc)) return 'e-Transfer received';
+    if (/refund|reversal|return/i.test(desc)) return 'refund';
+    if (/interest/i.test(desc)) return 'interest';
+    return type === 'bank' ? 'deposit / money in' : 'payment / credit';
 }
 
 function toggleAllPreview(checked) { document.querySelectorAll('.preview-check').forEach(cb => { cb.checked = checked; }); }
@@ -1214,6 +1222,7 @@ function autoCategorize(desc) {
     const learned = learnedCategories[catKey(desc)];
     if (learned) return learned;
     const d = desc.toUpperCase();
+    if (/E-?TRANSFER|ETRANSFER|INTERAC|\bEFT\b|WIRE|TRANSFER (TO|FROM)|\bXFER\b/.test(d)) return 'Transfers';
     if (/TIM HORT|STARBUCKS|COFFEE|CAFE/.test(d)) return 'Coffee';
     if (/RESTAURANT|DINING|MCDONALD|BURGER|PIZZA|SUBWAY|WENDY|KFC|A&W|DOORDASH|UBER ?EATS|SKIP/.test(d)) return 'Dining Out';
     if (/GROCERY|SUPERSTORE|WALMART|COSTCO|SAFEWAY|SOBEYS|LOBLAW|NO ?FRILLS|FRESHCO|SAVE.ON/.test(d)) return 'Groceries';
@@ -1268,6 +1277,7 @@ async function parsePDF(file) {
             items.sort((a, b) => a.x - b.x);
             lines.push({items, text: items.map(i => i.str).join(' ').replace(/\s+/g, ' ').trim()});
         });
+        lines.push({items: [], text: '', pageBreak: true});
     }
     // Transaction lines start with a date and contain at least one amount
     const dateRe = /^(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?|[A-Z][a-z]{2,8}\.? \d{1,2}(?:,? \d{4})?|\d{1,2}[ \-\/][A-Z][a-z]{2,8}\.?(?:[ \-\/,]+\d{2,4})?)\b/;
@@ -1282,21 +1292,36 @@ async function parsePDF(file) {
     const isBalHeader = s => /balance|borrowings/i.test(s);
     let columns = null;                                 // {out, in, bal} header x-midpoints
     const columnRows = [], legacyRows = [];
-    lines.forEach(({items, text}) => {
+    // Many banks print an e-Transfer's recipient / reference on its own line under the transaction.
+    // Such a line has no date and no amount and starts at the description column; append it.
+    let lastTx = null;                                  // {row, descX} of the previous transaction line
+    const skipItems = (items, from, len) => { let used = 0, k = from; while (k < items.length && used < len) { used += items[k].str.length + 1; k++; } return k; };
+    lines.forEach(({items, text, pageBreak}) => {
+        if (pageBreak) { lastTx = null; return; }
         if (/date/i.test(text)) {
             const out = items.find(i => isOutHeader(i.str) && !isInHeader(i.str));
             const inn = items.find(i => isInHeader(i.str) && !isOutHeader(i.str));
             if (out && inn && !amtItemRe.test(out.str)) {
                 const bal = items.find(i => isBalHeader(i.str));
                 columns = {out: out.mid, in: inn.mid, bal: bal ? bal.mid : null};
+                lastTx = null;
                 return;
             }
         }
         const dm = text.match(dateRe);
-        if (!dm) return;
+        if (!dm) {
+            if (lastTx && items.length && !items.some(i => amtItemRe.test(i.str)) && Math.abs(items[0].x - lastTx.descX) <= 15
+                && text.length <= 80 && !balanceRowRe.test(text) && !/^page \d/i.test(text)) {
+                lastTx.row[1] = (lastTx.row[1] + ' ' + text).replace(/\s+/g, ' ').trim();
+            } else lastTx = null;
+            return;
+        }
         let desc = text.slice(dm[0].length).trim();
+        let k = skipItems(items, 0, dm[0].length);
         const dm2 = desc.match(dateRe);   // card statements show two dates (transaction + posting) — drop the second
-        if (dm2) desc = desc.slice(dm2[0].length).trim();
+        if (dm2) { desc = desc.slice(dm2[0].length).trim(); k = skipItems(items, k, dm2[0].length); }
+        const descX = items[k] ? items[k].x : items[0].x;
+        lastTx = null;
         if (columns) {
             const nums = items.filter(i => amtItemRe.test(i.str));
             if (!nums.length) return;
@@ -1312,7 +1337,9 @@ async function parsePDF(file) {
             });
             desc = desc.replace(/\s+/g, ' ').trim();
             if (!desc || balanceRowRe.test(desc) || (!out && !inn)) return;
-            columnRows.push([dm[0], desc, out, inn]);
+            const row = [dm[0], desc, out, inn];
+            columnRows.push(row);
+            lastTx = {row, descX};
         } else {
             const amounts = [...text.matchAll(amtRe)].map(x => x[0]);
             if (!amounts.length) return;
@@ -1320,7 +1347,10 @@ async function parsePDF(file) {
             const amount = amounts.length >= 2 ? amounts[amounts.length - 2] : amounts[0];
             amounts.forEach(a => { desc = desc.replace(a, ''); });
             desc = desc.replace(/\s+/g, ' ').trim();
-            if (desc && !balanceRowRe.test(desc)) legacyRows.push([dm[0], desc, amount]);
+            if (!desc || balanceRowRe.test(desc)) return;
+            const row = [dm[0], desc, amount];
+            legacyRows.push(row);
+            lastTx = {row, descX};
         }
     });
     hasHeaderRow = false;

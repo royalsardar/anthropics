@@ -15,7 +15,7 @@ Two builds are included:
 
 ### 📊 Expenses
 - Add, edit, and delete expenses with category, "for" item (e.g. a specific car or phone), date, and who paid
-- 25 built-in categories plus your own categories **and sub-categories** (e.g. Insurance › Home): add them from the 🏷️ Categories panel or inline from the category picker, use them everywhere a category is chosen (expense form, import preview, recurring bills), and remove them again with expenses moved to the parent category (or Other)
+- 26 built-in categories (including **Transfers** for Interac e-Transfers, EFTs and account transfers) plus your own categories **and sub-categories** (e.g. Insurance › Home): add them from the 🏷️ Categories panel or inline from the category picker, use them everywhere a category is chosen (expense form, import preview, recurring bills), and remove them again with expenses moved to the parent category (or Other)
 - The spending chart rolls sub-categories up to their parent category
 - **Recurring expenses** (weekly / bi-weekly / monthly / yearly) that auto-generate entries each time the app opens, with pause/resume
 - Monthly summary with total, this-month and average-per-month stats, per-person breakdown, and a spending-by-category chart
@@ -25,7 +25,7 @@ Two builds are included:
 ### 📥 Statement Import (CSV + PDF)
 - **Upload multiple bank and credit-card statements at once** — each file gets its own mapping/preview step
 - Statement-type aware: credit card (purchases positive) vs. bank account (money out negative), with a "flip signs" toggle for banks that export the other way, and support for **separate "money out" / "money in" columns**
-- **Payments, refunds and deposits are detected automatically** and left unchecked so they don't inflate your spending
+- **Payments, refunds and deposits are detected automatically** and left unchecked so they don't inflate your spending, each labelled with why (e-Transfer received, deposit / money in, refund, interest, payment / credit)
 - **Opening / closing balance and column-total lines are never treated as expenses**: PDF import drops them, CSV import shows them unchecked as "balance row", and if any slipped in from an earlier import the All Expenses card offers a one-click cleanup
 - **Duplicate detection**: transactions already in the tracker (same date + amount + description) are flagged and skipped, so re-uploading an overlapping statement is safe
 - **Account tagging**: label each statement ("TD Visa", "Chequing"…) and the account shows in the Paid By column
@@ -33,7 +33,7 @@ Two builds are included:
 - **Visible feedback everywhere**: import progress, results, and errors show as in-page status text and toasts (browser popups are suppressed in embedded/sandboxed viewers, so the app never relies on them); destructive buttons use a click-twice confirm
 - Automatic column detection with a manual **column-mapping UI** (date / description / amount or debit+credit, header-row toggle)
 - Handles quoted CSV fields, `$1,234.56`, negative, trailing-minus, `(parenthesized)` and `12.34 CR` amounts, and multiple date formats (ISO, `MM/DD/YYYY`, `DD/MM/YYYY`, `Jul 12, 2026`, `02 Jan 2026` / `2-Jan-26`, and year-less `Jul 12` / `07/12` / `02 Jan` with statement-year inference)
-- **PDF statements** (text-based, not scanned): transaction lines are reconstructed from the page layout; card-style double dates (transaction + posting) are collapsed and bank-style trailing running balances are ignored. Bank statements with separate **Money out / Money in** (withdrawals / deposits) columns are read column-aware using the statement's own header row, so deposits are never counted as spending; opening/closing balance rows are skipped
+- **PDF statements** (text-based, not scanned): transaction lines are reconstructed from the page layout; card-style double dates (transaction + posting) are collapsed, bank-style trailing running balances are ignored, and a recipient / reference line printed under a transaction (typical for e-Transfers) is joined onto its description. Bank statements with separate **Money out / Money in** (withdrawals / deposits) columns are read column-aware using the statement's own header row, so deposits are never counted as spending; opening/closing balance rows are skipped
 - Auto-categorization from merchant keywords, **and it learns**: when you correct a category before importing, future imports of that merchant (ignoring store numbers) use your choice
 
 ### 💰 Net Worth & Debt
