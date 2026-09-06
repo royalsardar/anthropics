@@ -19,6 +19,7 @@ Two builds are included:
 - The spending chart rolls sub-categories up to their parent category
 - **Recurring expenses** (weekly / bi-weekly / monthly / yearly) that auto-generate entries each time the app opens, with pause/resume
 - Monthly summary with total, this-month and average-per-month stats, per-person breakdown, and a spending-by-category chart
+- **Change a category right in the All Expenses table**: each row's category is a dropdown; picking a new one saves instantly, updates the chart, and teaches the merchant → category mapping used by future imports
 - Live search filter and CSV export
 
 ### 📥 Statement Import (CSV + PDF)

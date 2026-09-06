@@ -51,6 +51,7 @@
     button.cat-x:hover { filter: none; background: var(--muted); }
     button.cat-del { color: #dc3545; }
     .cat-help { font-size: 0.88rem; opacity: 0.75; margin: 0 0 10px; }
+    select.row-cat { padding: 4px 6px; margin: 0; font-size: 0.85rem; max-width: 210px; }
 </style>
 </head>
 <body>
@@ -553,7 +554,7 @@ function renderTable() {
         row.innerHTML = `
             <td>${esc(exp.date)}</td>
             <td>${esc(exp.desc)}${exp.recurringId ? ' <span class="recurring-badge">recurring</span>' : ''}</td>
-            <td>${esc(exp.category)}</td>
+            <td>${rowCategorySelect(exp)}</td>
             <td>${esc(exp.forItem || '—')}</td>
             <td>${money(exp.amount)}</td>
             <td>${esc(exp.paidby)}</td>
@@ -564,6 +565,33 @@ function renderTable() {
         `;
         tbody.appendChild(row);
     });
+}
+
+// Inline category picker in the All Expenses table. Changing it saves at once, refreshes the
+// chart, and teaches the merchant → category mapping used by statement imports.
+function rowCategorySelect(exp) {
+    return `<select class="row-cat" onchange="changeExpenseCategory(${exp.id}, this)" aria-label="Category for ${esc(exp.desc)}">` +
+        categoryOptionsHTML(exp.category) +
+        (categoryExists(exp.category) ? '' : `<option value="${esc(exp.category)}" selected>${esc(exp.category)}</option>`) +
+        '<option value="__new__">+ New category…</option></select>';
+}
+function changeExpenseCategory(id, sel) {
+    const exp = expenses.find(e => e.id === id);
+    if (!exp) return;
+    if (sel.value === '__new__') {
+        sel.value = exp.category;
+        const card = document.getElementById('categoryCard');
+        if (card.style.display === 'none') toggleCategoryManager();
+        else card.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+        document.getElementById('newCatName').focus();
+        return;
+    }
+    if (sel.value === exp.category) return;
+    exp.category = sel.value;
+    rememberCategory(exp.desc, exp.category);
+    impStore.set('learnedCategories', learnedCategories);
+    saveData();
+    showToast(`${exp.desc}: category set to ${exp.category}`);
 }
 
 function filterExpenses() { renderTable(); }
