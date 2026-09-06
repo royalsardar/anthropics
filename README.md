@@ -18,7 +18,7 @@ Two builds are included:
 - 25 built-in categories plus custom categories (saved for reuse)
 - **Recurring expenses** (weekly / bi-weekly / monthly / yearly) that auto-generate entries each time the app opens, with pause/resume
 - Monthly summary with total, this-month and average-per-month stats, per-person breakdown, and a spending-by-category chart
-- Live search filter and CSV export
+- Live search filter and CSV export. When the file is opened directly in a browser the export is a plain download link. When the page is published as a claude.ai artifact, the sandbox never allows page-initiated downloads, so the app detects the artifact runtime (`window.claude.use('downloads')`) and saves through the artifact `downloads` capability instead; the viewer gets a confirmation prompt before the file is saved. Publish with `capabilities: {downloads: true}` for this to work — without it the button shows an error toast instead of failing silently
 
 ### 📥 Statement Import (CSV + PDF)
 - **Upload multiple bank and credit-card statements at once** — each file gets its own mapping/preview step

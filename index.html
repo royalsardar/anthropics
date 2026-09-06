@@ -552,18 +552,53 @@ function csvField(v) {
     return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 
-function exportCSV() {
+// ---- Artifact viewer support: the claude.ai artifact sandbox never grants pages
+// ---- download permission, so <a download> links are inert there. Inside that
+// ---- runtime `window.claude.use('downloads')` resolves the `downloads` capability
+// ---- (declared at publish time); anywhere else window.claude is absent and we
+// ---- keep the plain download link. The namespace arrives asynchronously, so
+// ---- resolve it once at load and reuse the promise when the button is clicked.
+const artifactDownloads = (window.claude && typeof window.claude.use === 'function')
+    ? window.claude.use('downloads').catch(() => null)
+    : Promise.resolve(null);
+
+function downloadViaLink(filename, text, mime) {
+    const blob = new Blob([text], {type: mime});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
+async function exportCSV() {
     if (!expenses.length) return showToast('No expenses to export', 'error');
     const rows = [['Date','Description','Category','For','Amount','Paid By']];
     [...expenses].sort((a,b) => new Date(b.date) - new Date(a.date))
         .forEach(e => rows.push([e.date, e.desc, e.category, e.forItem, e.amount.toFixed(2), e.paidby]));
     const csv = rows.map(r => r.map(csvField).join(',')).join('\n');
-    const blob = new Blob([csv], {type: 'text/csv'});
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `expenses-${getToday()}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    const filename = `expenses-${getToday()}.csv`;
+
+    const downloads = await artifactDownloads;
+    if (downloads) {
+        try {
+            await downloads.save({ filename, data: csv });
+            showToast(`Saved ${filename}`);
+        } catch (err) {
+            const code = err && err.code;
+            if (code === 'declined') showToast('Export cancelled');
+            else if (code === 'rate_limited') showToast('A save prompt is already open — finish it, then try again', 'error');
+            else showToast(`Could not save ${filename}: ${(err && err.message) || code || 'unknown error'}`, 'error');
+        }
+        return;
+    }
+
+    downloadViaLink(filename, csv, 'text/csv');
+    if (window.claude) {
+        // Running in the claude.ai runtime without the downloads capability: the link
+        // above is very likely blocked, so say so instead of failing silently.
+        showToast('This viewer did not grant file saving — if no download started, open the file locally to export', 'error');
+    }
 }
 
 // ==================== IMPORT (bank & credit card statements, multi-file) ====================
