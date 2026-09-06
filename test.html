@@ -123,6 +123,14 @@
     .record-row { display: flex; gap: 8px; font-size: 0.88rem; padding: 2px 0; flex-wrap: wrap; }
     .record-label { flex: 0 0 200px; color: var(--text-2, #6c757d); }
     #recordNotes { font-family: inherit; font-size: 0.92rem; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--border, #ddd); background: var(--card); color: var(--text); resize: vertical; }
+    .loan-block { margin-top: 10px; padding: 10px 12px; border: 1px dashed var(--border, #ddd); border-radius: 10px; font-size: 0.88rem; }
+    .loan-summary { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px 14px; margin: 6px 0; }
+    .amort-scroll { max-height: 340px; overflow: auto; margin-top: 6px; border: 1px solid var(--border, #ddd); border-radius: 8px; }
+    .amort-table { width: 100%; border-collapse: collapse; margin: 0; }
+    .amort-table th, .amort-table td { font-size: 0.8rem; padding: 4px 8px; white-space: nowrap; }
+    .amort-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .amort-now td { background: var(--muted); font-weight: 600; }
+    #loanPreview { margin: 6px 0 10px; padding: 8px 12px; border: 1px dashed var(--border, #ddd); border-radius: 10px; font-size: 0.88rem; }
 </style>
 
 <div class="container">
@@ -263,6 +271,7 @@
         <div class="two-col">
             <div class="card">
                 <h3>Assets</h3>
+                <select id="linkAssetRecord" onchange="linkRecordFromNetWorth(this, 'asset')" style="max-width:100%"></select>
                 <div class="flex-row">
                     <input type="text" id="assetName" placeholder="Name (Home, TFSA...)" style="width:180px">
                     <select id="assetCategory" style="width:150px">
@@ -285,6 +294,7 @@
             </div>
             <div class="card">
                 <h3>Liabilities</h3>
+                <select id="linkLiabilityRecord" onchange="linkRecordFromNetWorth(this, 'debt')" style="max-width:100%"></select>
                 <div class="flex-row">
                     <input type="text" id="liabilityName" placeholder="Name (Visa, Car Loan...)" style="width:170px">
                     <select id="liabilityType" style="width:140px">
@@ -350,7 +360,8 @@
                 </select>
                 <input type="text" id="recordName" placeholder="Name (2022 Toyota Camry, Home — Maple St, RBC TFSA…)" style="flex:1;min-width:260px">
             </div>
-            <div id="recordFieldsContainer" class="record-fields-grid"></div>
+            <div id="recordFieldsContainer" class="record-fields-grid" oninput="updateLoanPreview()" onchange="updateLoanPreview()"></div>
+            <div id="loanPreview" style="display:none"></div>
             <div id="recordCustomFieldsList"></div>
             <button type="button" class="ghost" onclick="addRecordCustomField()">+ Add custom field</button>
             <div style="margin-top:10px">
@@ -1788,11 +1799,12 @@ function renderAssets() {
     });
 }
 function renderLiabilities() {
+    renderRecordPickers();
     const tbody = document.querySelector('#liabilitiesTable tbody');
     tbody.innerHTML = '';
     allLiabilities().forEach(l => {
         const row = document.createElement('tr');
-        const src = l.fromRecord ? ' <span class="pill" title="This balance comes from the Records tab">from Records</span>' : '';
+        const src = l.fromRecord ? ` <span class="pill" title="This balance comes from the Records tab">from Records · ${l.source}</span>` : '';
         const action = l.fromRecord
             ? `<button class="small ghost" onclick="openRecordFromNetWorth(${l.recordId})" aria-label="Edit in Records">✏️</button>`
             : `<button class="small danger" onclick="deleteLiability(${l.id})" aria-label="Delete">🗑️</button>`;
@@ -1955,11 +1967,11 @@ function loadSampleData(btn) {
     records = [
         {id: uid(), type: 'vehicle', name: '2022 Toyota Camry', notes: 'Winter tires stored in the garage', createdAt: getToday(),
          fields: {make: 'Toyota', model: 'Camry', year: '2022', purchasePrice: '32500', purchaseDate: '2022-05-14', dealer: 'Country Hills Toyota',
-                  currentValue: '21000', lender: 'TD Auto Finance', loanBalance: '14500', apr: '4.9', amortization: '72', paymentAmount: '285', paymentFrequency: 'Bi-weekly', insuranceProvider: 'Intact'},
+                  currentValue: '21000', lender: 'TD Auto Finance', loanAmount: '32500', loanStartDate: '2022-06-01', apr: '4.9', amortization: '72', paymentAmount: '285', paymentFrequency: 'Bi-weekly', insuranceProvider: 'Intact'},
          customFields: [{label: 'Warranty expires', value: 'May 2027'}]},
         {id: uid(), type: 'home', name: 'Home — Maple St', notes: '', createdAt: getToday(),
-         fields: {purchasePrice: '425000', purchaseDate: '2019-08-01', currentValue: '485000', lender: 'Manulife', mortgageBalance: '312000', mortgageRate: '4.95',
-                  amortization: '25', renewalDate: '2028-03-01', paymentAmount: '1850', paymentFrequency: 'Monthly', propertyTaxAnnual: '3900', insuranceProvider: 'AMI'},
+         fields: {purchasePrice: '425000', purchaseDate: '2019-08-01', currentValue: '485000', lender: 'Manulife', mortgageAmount: '340000', loanStartDate: '2019-09-01', mortgageRate: '4.95',
+                  amortization: '25', renewalDate: '2028-03-01', paymentFrequency: 'Monthly', propertyTaxAnnual: '3900', insuranceProvider: 'AMI'},
          customFields: []},
         {id: uid(), type: 'insurance', name: 'Primerica term life', notes: '', createdAt: getToday(),
          fields: {policyType: 'Life', provider: 'Primerica', coverageAmount: '500000', premiumAmount: '95.13', premiumFrequency: 'Monthly', beneficiary: 'Spouse'},
@@ -2009,6 +2021,7 @@ function clearAllData(btn) {
 // a mortgage's rate and renewal date, a life insurance policy number, an RRSP's institution.
 // Each record type has preset fields; any record can also carry free-form custom fields.
 const PAYMENT_FREQ = ['Weekly', 'Bi-weekly', 'Semi-monthly', 'Monthly', 'Annually'];
+const COMPOUNDING = ['Semi-annual (Canadian mortgage)', 'Monthly (APR ÷ 12)', 'Same as payment frequency'];
 const RECORD_TYPES = {
     vehicle: { icon: '🚗', label: 'Vehicle', fields: [
         {key: 'make', label: 'Make', kind: 'text', placeholder: 'Toyota'},
@@ -2021,11 +2034,14 @@ const RECORD_TYPES = {
         {key: 'currentValue', label: 'Estimated Current Value', kind: 'money', hint: 'counts as an asset in Net Worth'},
         {key: 'dealer', label: 'Dealer', kind: 'text'},
         {key: 'lender', label: 'Lender / Financed By', kind: 'text'},
-        {key: 'loanBalance', label: 'Loan Balance Remaining', kind: 'money', hint: 'counts as a debt in Net Worth'},
+        {key: 'loanAmount', label: 'Amount Financed', kind: 'money', hint: 'with the rate, term and start date the balance is calculated for Net Worth'},
         {key: 'apr', label: 'Loan APR %', kind: 'percent'},
         {key: 'amortization', label: 'Amortization (months)', kind: 'number'},
-        {key: 'paymentAmount', label: 'Payment Amount', kind: 'money'},
+        {key: 'paymentAmount', label: 'Payment Amount', kind: 'money', hint: 'blank = the scheduled payment'},
         {key: 'paymentFrequency', label: 'Payment Frequency', kind: 'select', options: PAYMENT_FREQ},
+        {key: 'loanStartDate', label: 'Loan Start Date', kind: 'date', hint: 'first payment one period later; blank = purchase date'},
+        {key: 'compounding', label: 'Interest Compounding', kind: 'select', options: COMPOUNDING},
+        {key: 'loanBalance', label: 'Loan Balance Override', kind: 'money', hint: 'only if you want to enter the balance yourself'},
         {key: 'insuranceProvider', label: 'Insurance Provider', kind: 'text'},
         {key: 'insurancePolicy', label: 'Insurance Policy #', kind: 'text'},
         {key: 'odometer', label: 'Odometer (km)', kind: 'number'},
@@ -2037,12 +2053,15 @@ const RECORD_TYPES = {
         {key: 'purchaseDate', label: 'Purchase Date', kind: 'date'},
         {key: 'currentValue', label: 'Estimated Current Value', kind: 'money', hint: 'counts as an asset in Net Worth'},
         {key: 'lender', label: 'Mortgage Lender', kind: 'text'},
-        {key: 'mortgageBalance', label: 'Mortgage Balance Remaining', kind: 'money', hint: 'counts as a debt in Net Worth'},
+        {key: 'mortgageAmount', label: 'Mortgage Amount Borrowed', kind: 'money', hint: 'with the rate, amortization and start date the balance is calculated for Net Worth'},
         {key: 'mortgageRate', label: 'Mortgage Rate %', kind: 'percent'},
         {key: 'amortization', label: 'Amortization (years)', kind: 'number'},
-        {key: 'renewalDate', label: 'Mortgage Renewal Date', kind: 'date'},
-        {key: 'paymentAmount', label: 'Payment Amount', kind: 'money'},
+        {key: 'paymentAmount', label: 'Payment Amount', kind: 'money', hint: 'blank = the scheduled payment'},
         {key: 'paymentFrequency', label: 'Payment Frequency', kind: 'select', options: PAYMENT_FREQ},
+        {key: 'loanStartDate', label: 'Mortgage Start Date', kind: 'date', hint: 'first payment one period later; blank = purchase date'},
+        {key: 'compounding', label: 'Interest Compounding', kind: 'select', options: COMPOUNDING},
+        {key: 'renewalDate', label: 'Mortgage Renewal Date', kind: 'date'},
+        {key: 'mortgageBalance', label: 'Mortgage Balance Override', kind: 'money', hint: 'only if you want to enter the balance yourself'},
         {key: 'propertyTaxAnnual', label: 'Property Tax (annual)', kind: 'money'},
         {key: 'insuranceProvider', label: 'Home Insurance Provider', kind: 'text'},
         {key: 'insurancePolicy', label: 'Insurance Policy #', kind: 'text'},
@@ -2096,18 +2115,30 @@ function recordEntries(rec) {
 
 function handleRecordTypeChange() { renderRecordFieldInputs(); }
 
+function collectRecordFormFields(type) {
+    const fields = {};
+    recordTypeDef(type).fields.forEach(f => {
+        const el = document.getElementById('rf_' + f.key);
+        if (el && el.value.trim() !== '') fields[f.key] = el.value.trim();
+    });
+    return fields;
+}
+
 function renderRecordFieldInputs(values) {
     values = values || {};
     const def = recordTypeDef(document.getElementById('recordType').value);
     const box = document.getElementById('recordFieldsContainer');
     if (!def.fields.length) {
         box.innerHTML = '<p class="cat-help" style="grid-column:1/-1">No preset fields for this type — add custom fields below for anything you want to keep track of.</p>';
+        updateLoanPreview();
         return;
     }
     box.innerHTML = def.fields.map(f => {
         const val = values[f.key] ?? '';
         const id = 'rf_' + f.key;
         if (f.kind === 'select') {
+            if (f.key === 'compounding' && !val) return `<label class="record-field"><span>${esc(f.label)}</span>
+                <select id="${id}">${f.options.map((o, i) => `<option value="${esc(o)}" ${(def === RECORD_TYPES.home ? i === 0 : i === 1) ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select></label>`;
             return `<label class="record-field"><span>${esc(f.label)}</span>
                 <select id="${id}"><option value="">—</option>${f.options.map(o => `<option value="${esc(o)}" ${o === val ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select></label>`;
         }
@@ -2116,6 +2147,7 @@ function renderRecordFieldInputs(values) {
         return `<label class="record-field"><span>${esc(f.label)}</span>
             <input id="${id}" type="${inputType}"${step} placeholder="${esc(f.placeholder || '')}" value="${esc(val)}">${f.hint ? `<small>${esc(f.hint)}</small>` : ''}</label>`;
     }).join('');
+    updateLoanPreview();
 }
 
 function renderRecordCustomFields() {
@@ -2154,11 +2186,7 @@ function saveRecord() {
     const type = document.getElementById('recordType').value;
     const name = document.getElementById('recordName').value.trim();
     if (!name) return showToast('Please give this record a name', 'error');
-    const fields = {};
-    recordTypeDef(type).fields.forEach(f => {
-        const el = document.getElementById('rf_' + f.key);
-        if (el && el.value.trim() !== '') fields[f.key] = el.value.trim();
-    });
+    const fields = collectRecordFormFields(type);
     const customFields = recordCustomFieldRows
         .map(r => ({label: r.label.trim(), value: r.value.trim()}))
         .filter(r => r.label && r.value);
@@ -2250,6 +2278,7 @@ function renderRecordsList() {
                 <div class="record-detail" id="recDetail${r.id}" style="display:none">
                     ${entries.length ? entries.map(e => `<div class="record-row"><span class="record-label">${esc(e.label)}</span><span>${esc(e.value)}</span></div>`).join('') : '<p class="cat-none">No details recorded yet — use Edit to add some.</p>'}
                     ${r.notes ? `<div class="record-row"><span class="record-label">Notes</span><span>${esc(r.notes)}</span></div>` : ''}
+                    ${loanBlockHTML(r)}
                 </div>
             </div>`;
         }).join('');
@@ -2313,11 +2342,17 @@ function recordLiabilities() {
     const out = [];
     records.forEach(r => {
         const f = r.fields || {};
-        let balance = 0, type = '', rate = 0;
-        if (r.type === 'vehicle') { balance = num(f.loanBalance); type = 'Car Loan'; rate = num(f.apr); }
-        else if (r.type === 'home') { balance = num(f.mortgageBalance); type = 'Mortgage'; rate = num(f.mortgageRate); }
-        if (balance > 0) out.push({id: 'rec' + r.id, recordId: r.id, name: `${r.name} ${type === 'Mortgage' ? 'mortgage' : 'loan'}`, type, balance, rate,
-            minPayment: Math.round(monthlyEquivalent(f.paymentAmount, f.paymentFrequency) * 100) / 100, fromRecord: true});
+        if (r.type !== 'vehicle' && r.type !== 'home') return;
+        const isHome = r.type === 'home';
+        const override = loanOverrideOf(r);
+        const st = override > 0 ? null : recordLoanStatus(r);
+        const balance = override > 0 ? override : st ? st.balance : 0;
+        if (!(balance > 0)) return;
+        const payment = num(f.paymentAmount) || (st ? st.sched.payment : 0);
+        const frequency = st ? st.terms.frequency : f.paymentFrequency;
+        out.push({id: 'rec' + r.id, recordId: r.id, name: `${r.name} ${isHome ? 'mortgage' : 'loan'}`, type: isHome ? 'Mortgage' : 'Car Loan',
+            rate: num(isHome ? f.mortgageRate : f.apr), balance, source: override > 0 ? 'entered' : 'per schedule',
+            minPayment: Math.round(monthlyEquivalent(payment, frequency) * 100) / 100, fromRecord: true});
     });
     return out;
 }
@@ -2337,6 +2372,204 @@ function describeNetWorthSources() {
     if (!a && !l) return 'Vehicles, homes and accounts you keep in the Records tab are counted here automatically once they have a value or a loan balance.';
     const part = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
     return `Includes ${[a ? part(a, 'asset') : '', l ? part(l, 'debt') : ''].filter(Boolean).join(' and ')} from the Records tab — edit those there and they update here.`;
+}
+
+// ==================== AMORTIZATION ====================
+// Loan terms on a vehicle or home record → payment schedule → balance on any date. Canadian
+// mortgages compound semi-annually by law; most other loans quote an APR compounded monthly.
+function periodicRate(annualPct, periodsPerYear, compounding) {
+    const r = num(annualPct) / 100;
+    if (r <= 0) return 0;
+    if (/semi/i.test(compounding || '')) return Math.pow(1 + r / 2, 2 / periodsPerYear) - 1;
+    if (/same/i.test(compounding || '')) return r / periodsPerYear;
+    return Math.pow(1 + r / 12, 12 / periodsPerYear) - 1;
+}
+function addPeriods(dateStr, k, frequency) {
+    const d = new Date(dateStr + 'T00:00:00');
+    if (isNaN(d)) return null;
+    if (frequency === 'Weekly') d.setDate(d.getDate() + 7 * k);
+    else if (frequency === 'Bi-weekly') d.setDate(d.getDate() + 14 * k);
+    else if (frequency === 'Semi-monthly') { d.setMonth(d.getMonth() + Math.floor(k / 2)); if (k % 2) d.setDate(d.getDate() + 15); }
+    else if (frequency === 'Annually') d.setFullYear(d.getFullYear() + k);
+    else d.setMonth(d.getMonth() + k);
+    return d;
+}
+const fmtDay = d => d ? d.toISOString().slice(0, 10) : '—';
+const fmtMonth = d => d ? d.toLocaleDateString(undefined, {month: 'short', year: 'numeric'}) : '—';
+
+// The loan terms a record carries, or null when there isn't enough to build a schedule
+function loanTermsOf(rec) {
+    const f = rec.fields || {};
+    const isHome = rec.type === 'home';
+    if (!isHome && rec.type !== 'vehicle') return null;
+    const principal = num(isHome ? f.mortgageAmount : f.loanAmount);
+    const years = isHome ? num(f.amortization) : num(f.amortization) / 12;
+    const start = f.loanStartDate || f.purchaseDate || '';
+    if (!(principal > 0) || !(years > 0) || !start) return null;
+    return {
+        principal, years, start,
+        ratePct: num(isHome ? f.mortgageRate : f.apr),
+        frequency: PAYMENT_FREQ.includes(f.paymentFrequency) ? f.paymentFrequency : 'Monthly',
+        compounding: f.compounding || (isHome ? COMPOUNDING[0] : COMPOUNDING[1]),
+        paymentOverride: num(f.paymentAmount),
+    };
+}
+
+function buildAmortization(t) {
+    const n = FREQ_PER_YEAR[t.frequency] || 12;
+    const i = periodicRate(t.ratePct, n, t.compounding);
+    const N = Math.max(1, Math.round(t.years * n));
+    const scheduledPayment = i > 0 ? t.principal * i / (1 - Math.pow(1 + i, -N)) : t.principal / N;
+    const payment = t.paymentOverride > 0 ? t.paymentOverride : scheduledPayment;
+    const interestOnly = payment <= t.principal * i + 1e-9;   // never pays the loan down
+    const rows = [];
+    let bal = t.principal, totalInterest = 0, k = 0;
+    while (!interestOnly && bal > 0.005 && k < N * 3) {
+        k++;
+        const interest = bal * i;
+        const princ = Math.min(payment - interest, bal);
+        bal -= princ;
+        totalInterest += interest;
+        rows.push({n: k, date: addPeriods(t.start, k, t.frequency), payment: princ + interest, interest, principal: princ, balance: Math.max(bal, 0)});
+    }
+    return {principal: t.principal, periodsPerYear: n, periodicRate: i, N, scheduledPayment, payment, interestOnly, rows, totalInterest,
+        payoffDate: rows.length ? rows[rows.length - 1].date : null};
+}
+
+// Balance after the last payment on or before a date
+function balanceOn(sched, when) {
+    const d = when || new Date();
+    let balance = sched.principal, paymentsMade = 0;
+    for (const r of sched.rows) { if (r.date <= d) { balance = r.balance; paymentsMade++; } else break; }
+    return {balance, paymentsMade, paymentsLeft: sched.rows.length - paymentsMade};
+}
+
+function recordLoanStatus(rec) {
+    const t = loanTermsOf(rec);
+    if (!t) return null;
+    const sched = buildAmortization(t);
+    return {terms: t, sched, ...balanceOn(sched, new Date())};
+}
+
+function loanOverrideOf(rec) { const f = rec.fields || {}; return num(rec.type === 'home' ? f.mortgageBalance : f.loanBalance); }
+
+// One-line status used by the form preview and the record card
+function loanSummaryHTML(st, override) {
+    const s = st.sched;
+    if (s.interestOnly) return `<span class="warn">⚠️ The payment (${money(s.payment)}) doesn't cover the interest — this loan never pays down. Check the rate, frequency or payment.</span>`;
+    const accel = st.terms.paymentOverride > 0 && Math.abs(s.payment - s.scheduledPayment) > 0.5
+        ? ` <span class="cat-none">(scheduled ${money(s.scheduledPayment)})</span>` : '';
+    return `<div class="loan-summary">
+        <div><span class="record-label">Payment</span><br>${money(s.payment)} ${esc(st.terms.frequency.toLowerCase())}${accel}</div>
+        <div><span class="record-label">Balance today</span><br><strong>${money(st.balance)}</strong>${override ? ` <span class="cat-none">(Net Worth uses your entered ${money(override)})</span>` : ''}</div>
+        <div><span class="record-label">Payments</span><br>${st.paymentsMade} made · ${st.paymentsLeft} left</div>
+        <div><span class="record-label">Paid off</span><br>${fmtMonth(s.payoffDate)}</div>
+        <div><span class="record-label">Total interest</span><br>${money(s.totalInterest)}</div>
+    </div>`;
+}
+
+const LOAN_HINT = 'Enter the amount financed, rate, amortization and start date and the schedule, payment and balance are calculated for you.';
+
+function loanBlockHTML(r) {
+    if (r.type !== 'vehicle' && r.type !== 'home') return '';
+    const st = recordLoanStatus(r);
+    const override = loanOverrideOf(r);
+    if (!st) return `<div class="loan-block"><strong>📈 Loan</strong> <span class="cat-none">${override ? `Balance entered: ${money(override)}. ` : ''}${LOAN_HINT}</span></div>`;
+    const ym = new Date().toISOString().slice(0, 7);
+    return `<div class="loan-block"><strong>📈 Loan schedule</strong>
+        ${loanSummaryHTML(st, override)}
+        <div class="flex-row" style="margin-top:6px">
+            <label>Balance on <input type="month" value="${ym}" onchange="showBalanceOn(${r.id}, this.value, this.parentElement.nextElementSibling)" style="width:150px"></label><strong>${money(st.balance)}</strong>
+            <button class="cat-x" onclick="toggleAmortTable(${r.id}, this)">Show schedule</button>
+        </div>
+        <div id="amort${r.id}" style="display:none"></div>
+    </div>`;
+}
+
+function showBalanceOn(recordId, ym, outEl) {
+    const rec = records.find(r => r.id === recordId);
+    const st = rec && recordLoanStatus(rec);
+    if (!st || !ym) return;
+    const [y, m] = ym.split('-').map(Number);
+    const endOfMonth = new Date(y, m, 0, 23, 59, 59);
+    const b = balanceOn(st.sched, endOfMonth);
+    outEl.textContent = `${money(b.balance)} after ${b.paymentsMade} payment${b.paymentsMade === 1 ? '' : 's'}`;
+}
+
+function toggleAmortTable(recordId, btn) {
+    const box = document.getElementById('amort' + recordId);
+    if (!box) return;
+    const open = box.style.display === 'none';
+    box.style.display = open ? 'block' : 'none';
+    btn.textContent = open ? 'Hide schedule' : 'Show schedule';
+    if (open) renderAmortTable(recordId, false);
+}
+
+function renderAmortTable(recordId, everyPayment) {
+    const box = document.getElementById('amort' + recordId);
+    const rec = records.find(r => r.id === recordId);
+    const st = rec && recordLoanStatus(rec);
+    if (!box || !st) return;
+    const today = new Date();
+    const nextIdx = st.sched.rows.findIndex(r => r.date > today);
+    let body;
+    if (everyPayment) {
+        body = `<thead><tr><th>#</th><th>Date</th><th class="num">Payment</th><th class="num">Interest</th><th class="num">Principal</th><th class="num">Balance</th></tr></thead><tbody>` +
+            st.sched.rows.map((r, idx) => `<tr class="${idx === nextIdx ? 'amort-now' : ''}"><td>${r.n}</td><td>${fmtDay(r.date)}</td><td class="num">${money(r.payment)}</td><td class="num">${money(r.interest)}</td><td class="num">${money(r.principal)}</td><td class="num">${money(r.balance)}</td></tr>`).join('') + '</tbody>';
+    } else {
+        const years = new Map();
+        st.sched.rows.forEach(r => {
+            const y = r.date.getFullYear();
+            const g = years.get(y) || {y, count: 0, interest: 0, principal: 0, balance: r.balance};
+            g.count++; g.interest += r.interest; g.principal += r.principal; g.balance = r.balance;
+            years.set(y, g);
+        });
+        body = `<thead><tr><th>Year</th><th class="num">Payments</th><th class="num">Interest</th><th class="num">Principal</th><th class="num">Balance at year end</th></tr></thead><tbody>` +
+            [...years.values()].map(g => `<tr class="${g.y === today.getFullYear() ? 'amort-now' : ''}"><td>${g.y}</td><td class="num">${g.count}</td><td class="num">${money(g.interest)}</td><td class="num">${money(g.principal)}</td><td class="num">${money(g.balance)}</td></tr>`).join('') + '</tbody>';
+    }
+    box.innerHTML = `<label class="cat-none"><input type="checkbox" ${everyPayment ? 'checked' : ''} onchange="renderAmortTable(${recordId}, this.checked)"> Show every payment</label>
+        <div class="amort-scroll"><table class="amort-table">${body}</table></div>`;
+}
+
+// Live preview under the form while the financing fields are being filled in
+function currentFormRecord() {
+    const type = document.getElementById('recordType').value;
+    return {id: editRecordId || 0, type, name: '', fields: collectRecordFormFields(type)};
+}
+function updateLoanPreview() {
+    const box = document.getElementById('loanPreview');
+    if (!box) return;
+    const rec = currentFormRecord();
+    if (rec.type !== 'vehicle' && rec.type !== 'home') { box.style.display = 'none'; return; }
+    box.style.display = 'block';
+    const st = recordLoanStatus(rec);
+    box.innerHTML = st ? `<strong>📈 Loan schedule preview</strong>${loanSummaryHTML(st, loanOverrideOf(rec))}` : `<span class="cat-none">📈 ${LOAN_HINT}</span>`;
+}
+
+// "Pull from Records…" pickers on the Net Worth cards: records that aren't counted yet
+function renderRecordPickers() {
+    const a = document.getElementById('linkAssetRecord'), l = document.getElementById('linkLiabilityRecord');
+    if (!a || !l) return;
+    const assetIds = new Set(recordAssets().map(x => x.recordId)), debtIds = new Set(recordLiabilities().map(x => x.recordId));
+    const opt = r => `<option value="${r.id}">${recordTypeDef(r.type).icon} ${esc(r.name)}</option>`;
+    const assetCands = records.filter(r => r.type !== 'other' && !assetIds.has(r.id));
+    const debtCands = records.filter(r => (r.type === 'vehicle' || r.type === 'home') && !debtIds.has(r.id));
+    a.innerHTML = `<option value="">${assetCands.length ? 'Pull from Records…' : records.length ? 'All records with a value are already counted' : 'Add records in the Records tab to pull them here'}</option>` + assetCands.map(opt).join('');
+    l.innerHTML = `<option value="">${debtCands.length ? 'Pull a loan from Records…' : records.length ? 'All vehicle and home loans are already counted' : 'Add a vehicle or home in Records to pull its loan'}</option>` + debtCands.map(opt).join('');
+    a.disabled = !assetCands.length; l.disabled = !debtCands.length;
+}
+function linkRecordFromNetWorth(sel, side) {
+    const id = +sel.value;
+    sel.value = '';
+    const rec = records.find(r => r.id === id);
+    if (!rec) return;
+    openRecordFromNetWorth(id);
+    const key = side === 'asset'
+        ? (rec.type === 'investment' ? 'currentBalance' : rec.type === 'insurance' ? 'cashValue' : 'currentValue')
+        : (rec.type === 'home' ? 'mortgageAmount' : 'loanAmount');
+    const el = document.getElementById('rf_' + key);
+    if (el) { el.focus(); el.scrollIntoView({behavior: 'smooth', block: 'center'}); }
+    showToast(side === 'asset' ? `Enter ${rec.name}'s value and it will count as an asset` : `Enter ${rec.name}'s loan terms and its balance will count as a debt`);
 }
 
 // ==================== NAVIGATION & INIT ====================
