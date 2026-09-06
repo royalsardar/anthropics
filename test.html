@@ -107,6 +107,21 @@
     select.row-cat { padding: 4px 6px; margin: 0; font-size: 0.85rem; max-width: 210px; }
     .cat-move { flex: 1 0 100%; display: flex; gap: 6px; align-items: center; margin-top: 4px; font-size: 0.85rem; }
     .cat-move select { padding: 3px 6px; font-size: 0.82rem; margin: 0; }
+    .record-fields-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px 14px; margin: 12px 0; }
+    .record-field { display: flex; flex-direction: column; gap: 3px; font-size: 0.88rem; }
+    .record-field span { color: var(--text-2, #6c757d); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+    .record-field input, .record-field select { width: 100%; margin: 0; box-sizing: border-box; }
+    .record-custom-row { display: flex; gap: 8px; align-items: center; margin: 4px 0; flex-wrap: wrap; }
+    .record-group { margin-bottom: 18px; }
+    .record-group h3 { margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
+    .record-card { border: 1px solid var(--border, #ddd); border-radius: 10px; padding: 10px 14px; margin-bottom: 8px; }
+    .record-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+    .record-summary { font-size: 0.85rem; color: var(--text-2, #6c757d); margin-top: 2px; }
+    .record-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .record-detail { margin-top: 10px; border-top: 1px solid var(--border, #ddd); padding-top: 8px; }
+    .record-row { display: flex; gap: 8px; font-size: 0.88rem; padding: 2px 0; flex-wrap: wrap; }
+    .record-label { flex: 0 0 200px; color: var(--text-2, #6c757d); }
+    #recordNotes { font-family: inherit; font-size: 0.92rem; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--border, #ddd); background: var(--card); color: var(--text); resize: vertical; }
 </style>
 
 <div class="container">
@@ -123,6 +138,7 @@
     <div class="nav" role="tablist">
         <button id="navExpenses" role="tab" aria-selected="true" onclick="showSection('expenses')">📊 Expenses</button>
         <button id="navNetworth" role="tab" aria-selected="false" onclick="showSection('networth')">💰 Net Worth &amp; Debt</button>
+        <button id="navRecords" role="tab" aria-selected="false" onclick="showSection('records')">🗂️ Records</button>
     </div>
 
     <!-- EXPENSES SECTION -->
@@ -316,6 +332,41 @@
             <div id="snowballResults"></div>
         </div>
     </div>
+    <!-- RECORDS SECTION -->
+    <div id="recordsSection" style="display:none;">
+        <div class="card" id="recordFormCard">
+            <h2 id="recordFormTitle">Add a Record</h2>
+            <p class="cat-help">Keep the details you'd need in a pinch — vehicles, homes, insurance policies, RRSP / TFSA accounts, or anything else — in one place. Pick a type for preset fields, and add custom fields for whatever the preset doesn't cover.</p>
+            <div class="flex-row">
+                <select id="recordType" onchange="handleRecordTypeChange()" style="width:260px">
+                    <option value="vehicle">🚗 Vehicle</option>
+                    <option value="home">🏡 Home / Property</option>
+                    <option value="insurance">🛡️ Insurance Policy</option>
+                    <option value="investment">💹 Investment / Savings Account</option>
+                    <option value="other">📁 Other</option>
+                </select>
+                <input type="text" id="recordName" placeholder="Name (2022 Toyota Camry, Home — Maple St, RBC TFSA…)" style="flex:1;min-width:260px">
+            </div>
+            <div id="recordFieldsContainer" class="record-fields-grid"></div>
+            <div id="recordCustomFieldsList"></div>
+            <button type="button" class="ghost" onclick="addRecordCustomField()">+ Add custom field</button>
+            <div style="margin-top:10px">
+                <textarea id="recordNotes" rows="2" style="width:100%" placeholder="Notes — anything else worth remembering"></textarea>
+            </div>
+            <div style="margin-top:10px">
+                <button onclick="saveRecord()">Save Record</button>
+                <button class="ghost" onclick="cancelRecordEdit()">Cancel</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2 style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">Your Records
+                <button class="ghost" onclick="exportRecordsCSV()">📤 Export CSV</button>
+            </h2>
+            <input type="text" id="recordSearch" placeholder="Search records…" oninput="filterRecords()" style="width:100%">
+            <div id="recordsList" style="margin-top:12px"></div>
+        </div>
+    </div>
 </div>
 
 <datalist id="itemSuggestions">
@@ -346,6 +397,7 @@ let subCategories = store.get('subCategories') || {};   // { parent: [sub, ...] 
 let demotedCategories = store.get('demotedCategories') || [];   // base categories turned into someone else's sub-category
 let assets = store.get('assets') || [];
 let liabilities = store.get('liabilities') || [];
+let records = store.get('records') || [];
 let editId = null;
 
 const BASE_CATEGORIES = [
@@ -1889,6 +1941,22 @@ function loadSampleData(btn) {
     add(day(1, 15), 'Brake pads & service', 385, 'Car Repair and Maintenance', 'Toyota Camry', 'Alex');
     add(day(2, 11), 'Furnace filter & fixes', 96, 'Home Repair and Maintenance', '—', 'Jordan');
 
+    records = [
+        {id: uid(), type: 'vehicle', name: '2022 Toyota Camry', notes: 'Winter tires stored in the garage', createdAt: getToday(),
+         fields: {make: 'Toyota', model: 'Camry', year: '2022', purchasePrice: '32500', purchaseDate: '2022-05-14', dealer: 'Country Hills Toyota',
+                  lender: 'TD Auto Finance', apr: '4.9', amortization: '72', paymentAmount: '285', paymentFrequency: 'Bi-weekly', insuranceProvider: 'Intact'},
+         customFields: [{label: 'Warranty expires', value: 'May 2027'}]},
+        {id: uid(), type: 'home', name: 'Home — Maple St', notes: '', createdAt: getToday(),
+         fields: {purchasePrice: '425000', purchaseDate: '2019-08-01', currentValue: '485000', lender: 'Manulife', mortgageRate: '4.95',
+                  amortization: '25', renewalDate: '2028-03-01', paymentAmount: '1850', paymentFrequency: 'Monthly', propertyTaxAnnual: '3900', insuranceProvider: 'AMI'},
+         customFields: []},
+        {id: uid(), type: 'insurance', name: 'Primerica term life', notes: '', createdAt: getToday(),
+         fields: {policyType: 'Life', provider: 'Primerica', coverageAmount: '500000', premiumAmount: '95.13', premiumFrequency: 'Monthly', beneficiary: 'Spouse'},
+         customFields: []},
+        {id: uid(), type: 'investment', name: 'RBC TFSA', notes: '', createdAt: getToday(),
+         fields: {accountType: 'TFSA', institution: 'RBC', currentBalance: '41250', contributionRoom: '12000'}, customFields: []},
+    ];
+    saveRecordsData();
     recurring = [{id: uid(), desc: 'Netflix subscription', amount: 19.99, category: 'Subscriptions', forItem: '—',
         paidby: 'Alex', frequency: 'monthly', startDate: iso(new Date(today.getFullYear(), today.getMonth(), Math.min(today.getDate(), 28))), active: true,
         lastGenerated: null}];
@@ -1920,7 +1988,8 @@ function clearAllData(btn) {
     impStore.set('statements', statements);
     renderStatements();
     showToast('All data cleared');
-    expenses = []; recurring = []; customCategories = []; subCategories = {}; demotedCategories = []; assets = []; liabilities = [];
+    expenses = []; recurring = []; customCategories = []; subCategories = {}; demotedCategories = []; assets = []; liabilities = []; records = [];
+    saveRecordsData();
     saveData();
     saveNetWorthData();
     document.getElementById('snowballResults').innerHTML = '';
@@ -1928,13 +1997,283 @@ function clearAllData(btn) {
     drawLineChart(document.getElementById('timelineChartBox'), document.getElementById('timelineLegend'), [], []);
 }
 
+// ==================== RECORDS (vehicles, homes, policies, accounts) ====================
+// Reference details that are handy to have in one place: what a car cost and who financed it,
+// a mortgage's rate and renewal date, a life insurance policy number, an RRSP's institution.
+// Each record type has preset fields; any record can also carry free-form custom fields.
+const PAYMENT_FREQ = ['Weekly', 'Bi-weekly', 'Semi-monthly', 'Monthly', 'Annually'];
+const RECORD_TYPES = {
+    vehicle: { icon: '🚗', label: 'Vehicle', fields: [
+        {key: 'make', label: 'Make', kind: 'text', placeholder: 'Toyota'},
+        {key: 'model', label: 'Model', kind: 'text', placeholder: 'Camry'},
+        {key: 'year', label: 'Year', kind: 'number', placeholder: '2022'},
+        {key: 'vin', label: 'VIN', kind: 'text'},
+        {key: 'plate', label: 'License Plate', kind: 'text'},
+        {key: 'purchasePrice', label: 'Purchase Price', kind: 'money'},
+        {key: 'purchaseDate', label: 'Purchase Date', kind: 'date'},
+        {key: 'dealer', label: 'Dealer', kind: 'text'},
+        {key: 'lender', label: 'Lender / Financed By', kind: 'text'},
+        {key: 'apr', label: 'Loan APR %', kind: 'percent'},
+        {key: 'amortization', label: 'Amortization (months)', kind: 'number'},
+        {key: 'paymentAmount', label: 'Payment Amount', kind: 'money'},
+        {key: 'paymentFrequency', label: 'Payment Frequency', kind: 'select', options: PAYMENT_FREQ},
+        {key: 'insuranceProvider', label: 'Insurance Provider', kind: 'text'},
+        {key: 'insurancePolicy', label: 'Insurance Policy #', kind: 'text'},
+        {key: 'odometer', label: 'Odometer (km)', kind: 'number'},
+    ]},
+    home: { icon: '🏡', label: 'Home / Property', fields: [
+        {key: 'address', label: 'Address', kind: 'text'},
+        {key: 'yearBuilt', label: 'Year Built', kind: 'number'},
+        {key: 'purchasePrice', label: 'Purchase Price', kind: 'money'},
+        {key: 'purchaseDate', label: 'Purchase Date', kind: 'date'},
+        {key: 'currentValue', label: 'Estimated Current Value', kind: 'money'},
+        {key: 'lender', label: 'Mortgage Lender', kind: 'text'},
+        {key: 'mortgageRate', label: 'Mortgage Rate %', kind: 'percent'},
+        {key: 'amortization', label: 'Amortization (years)', kind: 'number'},
+        {key: 'renewalDate', label: 'Mortgage Renewal Date', kind: 'date'},
+        {key: 'paymentAmount', label: 'Payment Amount', kind: 'money'},
+        {key: 'paymentFrequency', label: 'Payment Frequency', kind: 'select', options: PAYMENT_FREQ},
+        {key: 'propertyTaxAnnual', label: 'Property Tax (annual)', kind: 'money'},
+        {key: 'insuranceProvider', label: 'Home Insurance Provider', kind: 'text'},
+        {key: 'insurancePolicy', label: 'Insurance Policy #', kind: 'text'},
+    ]},
+    insurance: { icon: '🛡️', label: 'Insurance Policy', fields: [
+        {key: 'policyType', label: 'Policy Type', kind: 'select', options: ['Life', 'Health', 'Disability', 'Critical Illness', 'Home', 'Auto', 'Umbrella', 'Other']},
+        {key: 'provider', label: 'Provider', kind: 'text'},
+        {key: 'policyNumber', label: 'Policy Number', kind: 'text'},
+        {key: 'coverageAmount', label: 'Coverage Amount', kind: 'money'},
+        {key: 'premiumAmount', label: 'Premium Amount', kind: 'money'},
+        {key: 'premiumFrequency', label: 'Premium Frequency', kind: 'select', options: PAYMENT_FREQ},
+        {key: 'beneficiary', label: 'Beneficiary', kind: 'text'},
+        {key: 'startDate', label: 'Start Date', kind: 'date'},
+        {key: 'agentContact', label: 'Agent / Contact', kind: 'text'},
+    ]},
+    investment: { icon: '💹', label: 'Investment / Savings Account', fields: [
+        {key: 'accountType', label: 'Account Type', kind: 'select', options: ['RRSP', 'TFSA', 'FHSA', 'RESP', 'RRIF', 'Non-Registered', 'Employer Pension', 'Other']},
+        {key: 'institution', label: 'Institution', kind: 'text'},
+        {key: 'accountNumber', label: 'Account Number', kind: 'text'},
+        {key: 'currentBalance', label: 'Current Balance', kind: 'money'},
+        {key: 'contributionRoom', label: 'Contribution Room Remaining', kind: 'money'},
+        {key: 'advisor', label: 'Advisor / Contact', kind: 'text'},
+        {key: 'beneficiary', label: 'Beneficiary', kind: 'text'},
+    ]},
+    other: { icon: '📁', label: 'Other', fields: [] },
+};
+
+let editRecordId = null;
+let recordCustomFieldRows = [];   // the custom {label, value} rows currently in the form
+
+function recordTypeDef(type) { return RECORD_TYPES[type] || RECORD_TYPES.other; }
+
+function fieldDisplayValue(kind, value) {
+    if (value === undefined || value === null || value === '') return '';
+    if (kind === 'money') return money(+value);
+    if (kind === 'percent') return (+value).toFixed(2) + '%';
+    return String(value);
+}
+
+// Ordered {label, value} pairs for display: preset fields in template order, then custom fields
+function recordEntries(rec) {
+    const entries = [];
+    recordTypeDef(rec.type).fields.forEach(f => {
+        const v = rec.fields ? rec.fields[f.key] : undefined;
+        if (v !== undefined && v !== null && v !== '') entries.push({label: f.label, value: fieldDisplayValue(f.kind, v)});
+    });
+    (rec.customFields || []).forEach(cf => { if (cf.label && cf.value) entries.push({label: cf.label, value: cf.value}); });
+    return entries;
+}
+
+function handleRecordTypeChange() { renderRecordFieldInputs(); }
+
+function renderRecordFieldInputs(values) {
+    values = values || {};
+    const def = recordTypeDef(document.getElementById('recordType').value);
+    const box = document.getElementById('recordFieldsContainer');
+    if (!def.fields.length) {
+        box.innerHTML = '<p class="cat-help" style="grid-column:1/-1">No preset fields for this type — add custom fields below for anything you want to keep track of.</p>';
+        return;
+    }
+    box.innerHTML = def.fields.map(f => {
+        const val = values[f.key] ?? '';
+        const id = 'rf_' + f.key;
+        if (f.kind === 'select') {
+            return `<label class="record-field"><span>${esc(f.label)}</span>
+                <select id="${id}"><option value="">—</option>${f.options.map(o => `<option value="${esc(o)}" ${o === val ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select></label>`;
+        }
+        const inputType = f.kind === 'date' ? 'date' : f.kind === 'text' ? 'text' : 'number';
+        const step = (f.kind === 'money' || f.kind === 'percent') ? ' step="0.01"' : (inputType === 'number' ? ' step="1"' : '');
+        return `<label class="record-field"><span>${esc(f.label)}</span>
+            <input id="${id}" type="${inputType}"${step} placeholder="${esc(f.placeholder || '')}" value="${esc(val)}"></label>`;
+    }).join('');
+}
+
+function renderRecordCustomFields() {
+    const box = document.getElementById('recordCustomFieldsList');
+    if (!recordCustomFieldRows.length) { box.innerHTML = ''; return; }
+    box.innerHTML = recordCustomFieldRows.map((row, i) => `
+        <div class="record-custom-row">
+            <input type="text" placeholder="Label (e.g. Warranty expires)" value="${esc(row.label)}" oninput="recordCustomFieldRows[${i}].label = this.value" style="width:220px">
+            <input type="text" placeholder="Value" value="${esc(row.value)}" oninput="recordCustomFieldRows[${i}].value = this.value" style="width:260px">
+            <button type="button" class="cat-x" onclick="removeRecordCustomField(${i})" aria-label="Remove custom field">×</button>
+        </div>`).join('');
+}
+
+function addRecordCustomField() {
+    recordCustomFieldRows.push({label: '', value: ''});
+    renderRecordCustomFields();
+    const inputs = document.querySelectorAll('#recordCustomFieldsList input');
+    if (inputs.length) inputs[inputs.length - 2].focus();
+}
+function removeRecordCustomField(i) { recordCustomFieldRows.splice(i, 1); renderRecordCustomFields(); }
+
+function resetRecordForm() {
+    editRecordId = null;
+    document.getElementById('recordFormTitle').textContent = 'Add a Record';
+    const typeSel = document.getElementById('recordType');
+    typeSel.value = 'vehicle';
+    typeSel.disabled = false;
+    document.getElementById('recordName').value = '';
+    document.getElementById('recordNotes').value = '';
+    recordCustomFieldRows = [];
+    renderRecordFieldInputs();
+    renderRecordCustomFields();
+}
+
+function saveRecord() {
+    const type = document.getElementById('recordType').value;
+    const name = document.getElementById('recordName').value.trim();
+    if (!name) return showToast('Please give this record a name', 'error');
+    const fields = {};
+    recordTypeDef(type).fields.forEach(f => {
+        const el = document.getElementById('rf_' + f.key);
+        if (el && el.value.trim() !== '') fields[f.key] = el.value.trim();
+    });
+    const customFields = recordCustomFieldRows
+        .map(r => ({label: r.label.trim(), value: r.value.trim()}))
+        .filter(r => r.label && r.value);
+    const notes = document.getElementById('recordNotes').value.trim();
+    if (editRecordId) {
+        const rec = records.find(r => r.id === editRecordId);
+        if (rec) Object.assign(rec, {name, fields, customFields, notes});
+        showToast(`Updated ${name}`);
+    } else {
+        records.unshift({id: uid(), type, name, fields, customFields, notes, createdAt: getToday()});
+        showToast(`Added ${name}`);
+    }
+    saveRecordsData();
+    resetRecordForm();
+}
+
+function editRecord(id) {
+    const rec = records.find(r => r.id === id);
+    if (!rec) return;
+    editRecordId = id;
+    document.getElementById('recordFormTitle').textContent = 'Edit Record';
+    const typeSel = document.getElementById('recordType');
+    typeSel.value = rec.type;
+    typeSel.disabled = true;   // a record keeps its type; its fields are tied to it
+    document.getElementById('recordName').value = rec.name;
+    document.getElementById('recordNotes').value = rec.notes || '';
+    recordCustomFieldRows = (rec.customFields || []).map(cf => ({label: cf.label, value: cf.value}));
+    renderRecordFieldInputs(rec.fields || {});
+    renderRecordCustomFields();
+    document.getElementById('recordFormCard').scrollIntoView({behavior: 'smooth', block: 'nearest'});
+}
+
+function cancelRecordEdit() { resetRecordForm(); }
+
+function deleteRecord(id, btn) {
+    needsConfirm('rec' + id, btn, () => {
+        const rec = records.find(r => r.id === id);
+        records = records.filter(r => r.id !== id);
+        if (editRecordId === id) resetRecordForm();
+        saveRecordsData();
+        showToast(`Deleted ${rec ? rec.name : 'record'}`);
+    }, 'Delete?');
+}
+
+function saveRecordsData() {
+    catStore.set('records', records);
+    renderRecordsList();
+}
+
+function filterRecords() { renderRecordsList(); }
+
+function toggleRecordDetail(id, btn) {
+    const el = document.getElementById('recDetail' + id);
+    if (!el) return;
+    const open = el.style.display === 'none';
+    el.style.display = open ? 'block' : 'none';
+    if (btn) btn.textContent = open ? 'Hide' : 'Details';
+}
+
+function renderRecordsList() {
+    const list = document.getElementById('recordsList');
+    if (!list) return;
+    const q = (document.getElementById('recordSearch')?.value || '').toLowerCase();
+    const groups = {};
+    records.forEach(r => {
+        const hay = `${r.name} ${recordTypeDef(r.type).label} ${recordEntries(r).map(e => e.label + ' ' + e.value).join(' ')} ${r.notes || ''}`.toLowerCase();
+        if (q && !hay.includes(q)) return;
+        (groups[r.type] = groups[r.type] || []).push(r);
+    });
+    const html = Object.keys(RECORD_TYPES).map(type => {
+        const items = groups[type];
+        if (!items || !items.length) return '';
+        const def = RECORD_TYPES[type];
+        const cards = items.map(r => {
+            const entries = recordEntries(r);
+            const summary = entries.slice(0, 3).map(e => `${esc(e.label)}: ${esc(e.value)}`).join(' · ');
+            return `<div class="record-card">
+                <div class="record-card-head">
+                    <div><strong>${esc(r.name)}</strong>${summary ? `<div class="record-summary">${summary}</div>` : ''}</div>
+                    <div class="record-actions">
+                        <button class="cat-x" onclick="toggleRecordDetail(${r.id}, this)">Details</button>
+                        <button class="cat-x" onclick="editRecord(${r.id})" aria-label="Edit ${esc(r.name)}">✏️ Edit</button>
+                        <button class="cat-x cat-del" onclick="deleteRecord(${r.id}, this)" aria-label="Delete ${esc(r.name)}">Delete</button>
+                    </div>
+                </div>
+                <div class="record-detail" id="recDetail${r.id}" style="display:none">
+                    ${entries.length ? entries.map(e => `<div class="record-row"><span class="record-label">${esc(e.label)}</span><span>${esc(e.value)}</span></div>`).join('') : '<p class="cat-none">No details recorded yet — use Edit to add some.</p>'}
+                    ${r.notes ? `<div class="record-row"><span class="record-label">Notes</span><span>${esc(r.notes)}</span></div>` : ''}
+                </div>
+            </div>`;
+        }).join('');
+        return `<div class="record-group"><h3>${def.icon} ${esc(def.label)} <span class="pill">${items.length}</span></h3>${cards}</div>`;
+    }).join('');
+    list.innerHTML = html || `<div class="cat-none" style="padding:16px 0;text-align:center">${records.length ? 'No records match your search.' : 'No records yet — add your first vehicle, home, insurance policy, or account above.'}</div>`;
+}
+
+// One row per detail so every record type fits the same four columns
+function exportRecordsCSV() {
+    if (!records.length) return showToast('No records to export', 'error');
+    const rows = [['Type', 'Name', 'Field', 'Value']];
+    records.forEach(r => {
+        const label = recordTypeDef(r.type).label;
+        const entries = recordEntries(r);
+        if (!entries.length && !r.notes) rows.push([label, r.name, '', '']);
+        entries.forEach(e => rows.push([label, r.name, e.label, e.value]));
+        if (r.notes) rows.push([label, r.name, 'Notes', r.notes]);
+    });
+    const blob = new Blob([rows.map(row => row.map(csvField).join(',')).join('\n')], {type: 'text/csv'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `records-${getToday()}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
 // ==================== NAVIGATION & INIT ====================
 function showSection(sec) {
     document.getElementById('expensesSection').style.display = sec === 'expenses' ? 'block' : 'none';
     document.getElementById('networthSection').style.display = sec === 'networth' ? 'block' : 'none';
+    document.getElementById('recordsSection').style.display = sec === 'records' ? 'block' : 'none';
     document.getElementById('navExpenses').setAttribute('aria-selected', sec === 'expenses');
     document.getElementById('navNetworth').setAttribute('aria-selected', sec === 'networth');
-    if (sec === 'networth') updateNetWorth(); else updateSummary();
+    document.getElementById('navRecords').setAttribute('aria-selected', sec === 'records');
+    if (sec === 'networth') updateNetWorth();
+    else if (sec === 'records') renderRecordsList();
+    else updateSummary();
     redrawAllCharts(); // charts registered while their tab was hidden render now
 }
 
@@ -1950,5 +2289,7 @@ renderRecurring();
 renderAssets();
 renderLiabilities();
 renderStatements();
+resetRecordForm();
+renderRecordsList();
 showSection('expenses');
 </script>

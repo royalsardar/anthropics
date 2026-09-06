@@ -1,6 +1,6 @@
 # 🏠 Household Expenses Tracker + Net Worth
 
-A single-file, no-backend household finance app. Open `index.html` in any modern browser — all data is stored locally in your browser via `localStorage`.
+A single-file, no-backend household finance app: expenses with statement import, net worth and debt payoff, and a records vault for vehicles, homes, policies and accounts. Open `index.html` in any modern browser — all data is stored locally in your browser via `localStorage`.
 
 Two builds are included:
 
@@ -36,6 +36,12 @@ Two builds are included:
 - Handles quoted CSV fields, `$1,234.56`, negative, trailing-minus, `(parenthesized)` and `12.34 CR` amounts, and multiple date formats (ISO, `MM/DD/YYYY`, `DD/MM/YYYY`, `Jul 12, 2026`, `02 Jan 2026` / `2-Jan-26`, and year-less `Jul 12` / `07/12` / `02 Jan` with statement-year inference)
 - **PDF statements** (text-based, not scanned): transaction lines are reconstructed from the page layout; card-style double dates (transaction + posting) are collapsed, bank-style trailing running balances are ignored, and a recipient / reference line printed under a transaction (typical for e-Transfers) is joined onto its description. Bank statements with separate **Money out / Money in** (withdrawals / deposits) columns are read column-aware using the statement's own header row, so deposits are never counted as spending; opening/closing balance rows are skipped
 - Auto-categorization from merchant keywords, **and it learns**: when you correct a category before importing, future imports of that merchant (ignoring store numbers) use your choice
+
+### 🗂️ Records (vehicles, homes, policies, accounts)
+- A third tab for the details you'd want in a pinch, kept in one place: **Vehicles** (make, model, year, VIN, plate, purchase price and date, dealer, lender, loan APR, amortization, payment amount and frequency, insurance provider and policy number, odometer), **Homes / Property** (address, purchase price, current value, mortgage lender, rate, amortization, renewal date, payment, property tax, home insurance), **Insurance Policies** (type, provider, policy number, coverage, premium and frequency, beneficiary, start date, agent), **Investment / Savings Accounts** (RRSP, TFSA, FHSA, RESP, RRIF, non-registered, pension — institution, account number, balance, contribution room, advisor, beneficiary), and **Other** for anything else
+- Every record can carry **custom fields** (any label + value, e.g. "Warranty expires — May 2027") on top of the preset ones, plus free-form notes
+- Records are grouped by type with a one-line summary; expand any card for the full detail list, edit it in place, or delete it (click-twice confirm). Search matches every field, not just the name
+- Export all records to CSV (one row per detail so every type fits the same columns)
 
 ### 💰 Net Worth & Debt
 - Track assets (cash, investments, real estate, vehicles…) and liabilities (with APR and minimum payment)
