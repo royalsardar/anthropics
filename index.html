@@ -58,6 +58,7 @@
     .record-field { display: flex; flex-direction: column; gap: 3px; font-size: 0.88rem; }
     .record-field span { color: var(--text-2, #6c757d); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
     .record-field input, .record-field select { width: 100%; margin: 0; box-sizing: border-box; }
+    .record-field small { font-size: 0.74rem; color: var(--text-2, #6c757d); }
     .record-custom-row { display: flex; gap: 8px; align-items: center; margin: 4px 0; flex-wrap: wrap; }
     .record-group { margin-bottom: 18px; }
     .record-group h3 { margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
@@ -186,6 +187,7 @@
     <div id="networthSection" style="display:none;">
         <div class="card">
             <h2>💰 Net Worth Summary</h2>
+            <p id="networthSource" class="cat-help"></p>
             <div style="display:flex; gap:40px; flex-wrap:wrap;">
                 <div><strong>Assets:</strong><br><span id="totalAssets" class="networth">$0.00</span></div>
                 <div><strong>Liabilities:</strong><br><span id="totalLiabilities" class="networth liability">$0.00</span></div>
@@ -257,6 +259,7 @@
         <div class="card" id="recordFormCard">
             <h2 id="recordFormTitle">Add a Record</h2>
             <p class="cat-help">Keep the details you'd need in a pinch — vehicles, homes, insurance policies, RRSP / TFSA accounts, or anything else — in one place. Pick a type for preset fields, and add custom fields for whatever the preset doesn't cover.</p>
+            <p class="cat-help">💡 Connected to Net Worth: a current value or account balance counts as an asset, and a loan or mortgage balance counts as a debt.</p>
             <div class="flex-row">
                 <select id="recordType" onchange="handleRecordTypeChange()" style="width:260px">
                     <option value="vehicle">🚗 Vehicle</option>
@@ -1526,40 +1529,47 @@ function deleteLiability(id) {
 function renderAssets() {
     const tbody = document.querySelector('#assetsTable tbody');
     tbody.innerHTML = '';
-    assets.forEach(a => {
+    allAssets().forEach(a => {
         const row = document.createElement('tr');
-        row.innerHTML = `<td>${esc(a.name)}</td><td>${esc(a.category)}</td><td>${money(a.value)}</td>
-            <td><button class="delete-btn" onclick="deleteAsset(${a.id})">🗑️</button></td>`;
+        const src = a.fromRecord ? ` <span class="pill" title="This value comes from the Records tab">from Records${a.estimate ? ' · purchase price' : ''}</span>` : '';
+        const action = a.fromRecord
+            ? `<button class="edit-btn" onclick="openRecordFromNetWorth(${a.recordId})" aria-label="Edit in Records">✏️</button>`
+            : `<button class="delete-btn" onclick="deleteAsset(${a.id})" aria-label="Delete">🗑️</button>`;
+        row.innerHTML = `<td>${esc(a.name)}${src}</td><td>${esc(a.category)}</td><td>${money(a.value)}</td><td>${action}</td>`;
         tbody.appendChild(row);
     });
 }
-
 function renderLiabilities() {
     const tbody = document.querySelector('#liabilitiesTable tbody');
     tbody.innerHTML = '';
-    liabilities.forEach(l => {
+    allLiabilities().forEach(l => {
         const row = document.createElement('tr');
-        row.innerHTML = `<td>${esc(l.name)}</td><td>${esc(l.type)}</td><td>${money(l.balance)}</td>
-            <td>${l.rate.toFixed(2)}%</td><td>${money(l.minPayment)}</td>
-            <td><button class="delete-btn" onclick="deleteLiability(${l.id})">🗑️</button></td>`;
+        const src = l.fromRecord ? ' <span class="pill" title="This balance comes from the Records tab">from Records</span>' : '';
+        const action = l.fromRecord
+            ? `<button class="edit-btn" onclick="openRecordFromNetWorth(${l.recordId})" aria-label="Edit in Records">✏️</button>`
+            : `<button class="delete-btn" onclick="deleteLiability(${l.id})" aria-label="Delete">🗑️</button>`;
+        row.innerHTML = `<td>${esc(l.name)}${src}</td><td>${esc(l.type)}</td><td>${money(l.balance)}</td>
+            <td>${(+l.rate).toFixed(2)}%</td><td>${money(l.minPayment)}</td><td>${action}</td>`;
         tbody.appendChild(row);
     });
 }
 
 function updateNetWorth() {
-    const totalAssets = assets.reduce((s, a) => s + a.value, 0);
-    const totalLiabilities = liabilities.reduce((s, l) => s + l.balance, 0);
+    const totalAssets = allAssets().reduce((s, a) => s + a.value, 0);
+    const totalLiabilities = allLiabilities().reduce((s, l) => s + l.balance, 0);
     const net = totalAssets - totalLiabilities;
     document.getElementById('totalAssets').textContent = money(totalAssets);
     document.getElementById('totalLiabilities').textContent = money(totalLiabilities);
     const netEl = document.getElementById('netWorth');
     netEl.textContent = money(net);
+    const srcEl = document.getElementById('networthSource');
+    if (srcEl) srcEl.textContent = describeNetWorthSources();
     netEl.style.color = net >= 0 ? '#28a745' : '#dc3545';
 
     // Asset allocation by category
     if (!chartsAvailable()) return;
     const byCat = {};
-    assets.forEach(a => { byCat[a.category] = (byCat[a.category] || 0) + a.value; });
+    allAssets().forEach(a => { byCat[a.category] = (byCat[a.category] || 0) + a.value; });
     if (assetChart) assetChart.destroy();
     assetChart = new Chart(document.getElementById('assetChart'), {
         type: 'doughnut',
@@ -1575,8 +1585,8 @@ function updateNetWorth() {
     liabilityChart = new Chart(document.getElementById('liabilityChart'), {
         type: 'doughnut',
         data: {
-            labels: liabilities.map(l => l.name),
-            datasets: [{data: liabilities.map(l => l.balance), backgroundColor: PALETTE.slice(2).concat(PALETTE)}]
+            labels: allLiabilities().map(l => l.name),
+            datasets: [{data: allLiabilities().map(l => l.balance), backgroundColor: PALETTE.slice(2).concat(PALETTE)}]
         },
         options: { responsive: true, maintainAspectRatio: false,
             plugins: { tooltip: { callbacks: { label: ctx => `${ctx.label}: ${money(ctx.parsed)}` } } } }
@@ -1585,13 +1595,13 @@ function updateNetWorth() {
 
 function runDebtSnowballWithChart() {
     const results = document.getElementById('snowballResults');
-    if (!liabilities.length) {
+    if (!allLiabilities().length) {
         results.innerHTML = '<p>Add some debts above to calculate a payoff timeline.</p>';
         return;
     }
     const extra = parseFloat(document.getElementById('extraPayment').value) || 0;
     // Snowball order: smallest balance first
-    const debts = liabilities.map(l => ({...l})).sort((a, b) => a.balance - b.balance);
+    const debts = allLiabilities().map(l => ({...l})).sort((a, b) => a.balance - b.balance);
     const totalBudget = extra + debts.reduce((s, d) => s + d.minPayment, 0);
 
     const monthlyInterest0 = debts.reduce((s, d) => s + d.balance * d.rate / 1200, 0);
@@ -1711,8 +1721,10 @@ const RECORD_TYPES = {
         {key: 'plate', label: 'License Plate', kind: 'text'},
         {key: 'purchasePrice', label: 'Purchase Price', kind: 'money'},
         {key: 'purchaseDate', label: 'Purchase Date', kind: 'date'},
+        {key: 'currentValue', label: 'Estimated Current Value', kind: 'money', hint: 'counts as an asset in Net Worth'},
         {key: 'dealer', label: 'Dealer', kind: 'text'},
         {key: 'lender', label: 'Lender / Financed By', kind: 'text'},
+        {key: 'loanBalance', label: 'Loan Balance Remaining', kind: 'money', hint: 'counts as a debt in Net Worth'},
         {key: 'apr', label: 'Loan APR %', kind: 'percent'},
         {key: 'amortization', label: 'Amortization (months)', kind: 'number'},
         {key: 'paymentAmount', label: 'Payment Amount', kind: 'money'},
@@ -1726,8 +1738,9 @@ const RECORD_TYPES = {
         {key: 'yearBuilt', label: 'Year Built', kind: 'number'},
         {key: 'purchasePrice', label: 'Purchase Price', kind: 'money'},
         {key: 'purchaseDate', label: 'Purchase Date', kind: 'date'},
-        {key: 'currentValue', label: 'Estimated Current Value', kind: 'money'},
+        {key: 'currentValue', label: 'Estimated Current Value', kind: 'money', hint: 'counts as an asset in Net Worth'},
         {key: 'lender', label: 'Mortgage Lender', kind: 'text'},
+        {key: 'mortgageBalance', label: 'Mortgage Balance Remaining', kind: 'money', hint: 'counts as a debt in Net Worth'},
         {key: 'mortgageRate', label: 'Mortgage Rate %', kind: 'percent'},
         {key: 'amortization', label: 'Amortization (years)', kind: 'number'},
         {key: 'renewalDate', label: 'Mortgage Renewal Date', kind: 'date'},
@@ -1742,6 +1755,7 @@ const RECORD_TYPES = {
         {key: 'provider', label: 'Provider', kind: 'text'},
         {key: 'policyNumber', label: 'Policy Number', kind: 'text'},
         {key: 'coverageAmount', label: 'Coverage Amount', kind: 'money'},
+        {key: 'cashValue', label: 'Cash Surrender Value', kind: 'money', hint: 'whole-life policies only; counts as an asset'},
         {key: 'premiumAmount', label: 'Premium Amount', kind: 'money'},
         {key: 'premiumFrequency', label: 'Premium Frequency', kind: 'select', options: PAYMENT_FREQ},
         {key: 'beneficiary', label: 'Beneficiary', kind: 'text'},
@@ -1752,7 +1766,7 @@ const RECORD_TYPES = {
         {key: 'accountType', label: 'Account Type', kind: 'select', options: ['RRSP', 'TFSA', 'FHSA', 'RESP', 'RRIF', 'Non-Registered', 'Employer Pension', 'Other']},
         {key: 'institution', label: 'Institution', kind: 'text'},
         {key: 'accountNumber', label: 'Account Number', kind: 'text'},
-        {key: 'currentBalance', label: 'Current Balance', kind: 'money'},
+        {key: 'currentBalance', label: 'Current Balance', kind: 'money', hint: 'counts as an asset in Net Worth'},
         {key: 'contributionRoom', label: 'Contribution Room Remaining', kind: 'money'},
         {key: 'advisor', label: 'Advisor / Contact', kind: 'text'},
         {key: 'beneficiary', label: 'Beneficiary', kind: 'text'},
@@ -1803,7 +1817,7 @@ function renderRecordFieldInputs(values) {
         const inputType = f.kind === 'date' ? 'date' : f.kind === 'text' ? 'text' : 'number';
         const step = (f.kind === 'money' || f.kind === 'percent') ? ' step="0.01"' : (inputType === 'number' ? ' step="1"' : '');
         return `<label class="record-field"><span>${esc(f.label)}</span>
-            <input id="${id}" type="${inputType}"${step} placeholder="${esc(f.placeholder || '')}" value="${esc(val)}"></label>`;
+            <input id="${id}" type="${inputType}"${step} placeholder="${esc(f.placeholder || '')}" value="${esc(val)}">${f.hint ? `<small>${esc(f.hint)}</small>` : ''}</label>`;
     }).join('');
 }
 
@@ -1895,6 +1909,9 @@ function deleteRecord(id, btn) {
 function saveRecordsData() {
     catStore.set('records', records);
     renderRecordsList();
+    renderAssets();
+    renderLiabilities();
+    updateNetWorth();
 }
 
 function filterRecords() { renderRecordsList(); }
@@ -1961,6 +1978,68 @@ function exportRecordsCSV() {
     a.download = `records-${getToday()}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
+}
+
+// ==================== RECORDS → NET WORTH ====================
+// Records feed Net Worth directly: a vehicle, home, or account with a value counts as an asset,
+// and a vehicle loan or mortgage balance counts as a liability. Manual Net Worth entries stay
+// for things that have no record (cash, a credit card, a student loan...).
+const FREQ_PER_YEAR = {'Weekly': 52, 'Bi-weekly': 26, 'Semi-monthly': 24, 'Monthly': 12, 'Annually': 1};
+function monthlyEquivalent(amount, frequency) {
+    const a = num(amount);
+    return a ? a * (FREQ_PER_YEAR[frequency] || 12) / 12 : 0;
+}
+function num(v) { const n = parseFloat(String(v ?? '').replace(/[$,\s]/g, '')); return isNaN(n) ? 0 : n; }
+
+function recordAssets() {
+    const out = [];
+    records.forEach(r => {
+        const f = r.fields || {};
+        let value = 0, category = 'Other', estimate = false;
+        if (r.type === 'vehicle' || r.type === 'home') {
+            value = num(f.currentValue) || num(f.purchasePrice);
+            estimate = !num(f.currentValue) && value > 0;      // falling back to what was paid
+            category = r.type === 'vehicle' ? 'Vehicle' : 'Real Estate';
+        } else if (r.type === 'investment') {
+            value = num(f.currentBalance);
+            category = /RRSP|RRIF|Pension/i.test(f.accountType || '') ? 'Retirement' : 'Investments';
+        } else if (r.type === 'insurance') {
+            value = num(f.cashValue);                           // whole-life cash value only; coverage is not an asset
+            category = 'Investments';
+        }
+        if (value > 0) out.push({id: 'rec' + r.id, recordId: r.id, name: r.name, category, value, fromRecord: true, estimate});
+    });
+    return out;
+}
+
+function recordLiabilities() {
+    const out = [];
+    records.forEach(r => {
+        const f = r.fields || {};
+        let balance = 0, type = '', rate = 0;
+        if (r.type === 'vehicle') { balance = num(f.loanBalance); type = 'Car Loan'; rate = num(f.apr); }
+        else if (r.type === 'home') { balance = num(f.mortgageBalance); type = 'Mortgage'; rate = num(f.mortgageRate); }
+        if (balance > 0) out.push({id: 'rec' + r.id, recordId: r.id, name: `${r.name} ${type === 'Mortgage' ? 'mortgage' : 'loan'}`, type, balance, rate,
+            minPayment: Math.round(monthlyEquivalent(f.paymentAmount, f.paymentFrequency) * 100) / 100, fromRecord: true});
+    });
+    return out;
+}
+
+function allAssets() { return [...recordAssets(), ...assets]; }
+function allLiabilities() { return [...recordLiabilities(), ...liabilities]; }
+
+function openRecordFromNetWorth(recordId) {
+    showSection('records');
+    const nav = document.getElementById('navRecords');
+    if (nav) nav.setAttribute('aria-selected', 'true');
+    editRecord(recordId);
+}
+
+function describeNetWorthSources() {
+    const a = recordAssets().length, l = recordLiabilities().length;
+    if (!a && !l) return 'Vehicles, homes and accounts you keep in the Records tab are counted here automatically once they have a value or a loan balance.';
+    const part = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+    return `Includes ${[a ? part(a, 'asset') : '', l ? part(l, 'debt') : ''].filter(Boolean).join(' and ')} from the Records tab — edit those there and they update here.`;
 }
 
 // ==================== NAVIGATION & INIT ====================

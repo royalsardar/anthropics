@@ -44,7 +44,8 @@ Two builds are included:
 - Export all records to CSV (one row per detail so every type fits the same columns)
 
 ### 💰 Net Worth & Debt
-- Track assets (cash, investments, real estate, vehicles…) and liabilities (with APR and minimum payment)
+- **Connected to Records**: a vehicle or home with a current value (or purchase price as a fallback), an account balance, or a whole-life policy's cash value counts as an asset automatically, and a vehicle loan or mortgage balance counts as a liability, with the loan's APR and its monthly-equivalent payment (bi-weekly, weekly, semi-monthly and annual payments are converted). These rows are tagged "from Records" and link back to the record for editing
+- Manual assets (cash, investments, real estate, vehicles…) and liabilities (with APR and minimum payment) for anything that has no record
 - Net worth summary plus asset-allocation and liability-breakdown doughnut charts
 - **❄️ Debt snowball calculator**: enter an extra monthly payment and get a month-by-month payoff timeline chart (one line per debt + total), payoff order, debt-free date, and total interest paid — with a warning if payments don't cover interest
 
