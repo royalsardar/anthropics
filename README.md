@@ -29,8 +29,8 @@ Two builds are included:
 - **Imported Statements list**: every import is logged with file name, account, transaction count, date range, and import date — remove a statement to remove its transactions too
 - **Visible feedback everywhere**: import progress, results, and errors show as in-page status text and toasts (browser popups are suppressed in embedded/sandboxed viewers, so the app never relies on them); destructive buttons use a click-twice confirm
 - Automatic column detection with a manual **column-mapping UI** (date / description / amount or debit+credit, header-row toggle)
-- Handles quoted CSV fields, `$1,234.56`, negative, trailing-minus, `(parenthesized)` and `12.34 CR` amounts, and multiple date formats (ISO, `MM/DD/YYYY`, `DD/MM/YYYY`, `Jul 12, 2026`, and year-less `Jul 12` / `07/12` with statement-year inference)
-- **PDF statements** (text-based, not scanned): transaction lines are reconstructed from the page layout; card-style double dates (transaction + posting) are collapsed and bank-style trailing running balances are ignored
+- Handles quoted CSV fields, `$1,234.56`, negative, trailing-minus, `(parenthesized)` and `12.34 CR` amounts, and multiple date formats (ISO, `MM/DD/YYYY`, `DD/MM/YYYY`, `Jul 12, 2026`, `02 Jan 2026` / `2-Jan-26`, and year-less `Jul 12` / `07/12` / `02 Jan` with statement-year inference)
+- **PDF statements** (text-based, not scanned): transaction lines are reconstructed from the page layout; card-style double dates (transaction + posting) are collapsed and bank-style trailing running balances are ignored. Bank statements with separate **Money out / Money in** (withdrawals / deposits) columns are read column-aware using the statement's own header row, so deposits are never counted as spending; opening/closing balance rows are skipped
 - Auto-categorization from merchant keywords, **and it learns**: when you correct a category before importing, future imports of that merchant (ignoring store numbers) use your choice
 
 ### 💰 Net Worth & Debt

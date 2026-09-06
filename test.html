@@ -1082,13 +1082,27 @@ function parseFlexibleDate(str) {
         const [mo, day] = a > 12 ? [b, a] : [a, b];
         return inferYear(mo, day);
     }
-    m = s.match(/^([A-Za-z]{3,9})\.? (\d{1,2})(?:,? (\d{4}))?$/);
+    m = s.match(/^([A-Za-z]{3,9})\.? (\d{1,2})(?:,? (\d{4}))?$/);   // "Jul 12, 2026", "Jul 12"
     if (m) {
-        const mo = new Date(`${m[1]} 1, 2000`).getMonth();
-        if (isNaN(mo)) return null;
+        const mo = monthIndex(m[1]);
+        if (mo < 0) return null;
         return m[3] ? isoDate(+m[3], mo + 1, +m[2]) : inferYear(mo + 1, +m[2]);
     }
+    m = s.match(/^(\d{1,2})[ \-\/]([A-Za-z]{3,9})\.?(?:[ \-\/,]+(\d{2,4}))?$/);   // "02 Jan 2026", "2-Jan-26", "02 Jan" — bank statements
+    if (m) {
+        const mo = monthIndex(m[2]);
+        if (mo < 0) return null;
+        if (!m[3]) return inferYear(mo + 1, +m[1]);
+        let y = +m[3];
+        if (y < 100) y += 2000;
+        return isoDate(y, mo + 1, +m[1]);
+    }
     return null;
+}
+
+// "Jan", "January", "Sept" → 0-based month, or -1
+function monthIndex(name) {
+    return ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'].indexOf(String(name).slice(0, 3).toLowerCase());
 }
 
 // Year-less statement dates: assume this year unless that lands well in the future
@@ -1220,10 +1234,10 @@ function autoCategorize(desc) {
     if (/MORTGAGE/.test(d)) return 'Mortgage Payments';
     if (/RENT/.test(d)) return 'Rent';
     if (/HYDRO|ELECTRIC|WATER|ENBRIDGE|FORTIS|UTILIT/.test(d)) return 'Utilities';
+    if (/INSURANCE|^INS\b|INTACT|PRIMERICA/.test(d)) return 'Insurance';   // before Subscriptions: 'INS PRIMERICA LIFE' must not match PRIME
     if (/NETFLIX|SPOTIFY|DISNEY|PRIME|CRAVE|APPLE\.COM|SUBSCRIPTION|YOUTUBE/.test(d)) return 'Subscriptions';
     if (/ROGERS|BELL|TELUS|FIDO|KOODO|FREEDOM|VERIZON|T-MOBILE|AT&T/.test(d)) return 'Cell Phone';
     if (/PHARMA|SHOPPERS|DRUG|DENTAL|CLINIC|MEDICAL/.test(d)) return 'Healthcare';
-    if (/INSURANCE/.test(d)) return 'Insurance';
     if (/UBER|LYFT|TRANSIT|TAXI|PARKING/.test(d)) return 'Transport';
     if (/CINEMA|CINEPLEX|THEATRE|MOVIE|STEAM|PLAYSTATION|XBOX|NINTENDO/.test(d)) return 'Entertainment';
     if (/AMAZON|AMZN|EBAY|BEST ?BUY|IKEA|HOME ?DEPOT|CANADIAN ?TIRE/.test(d)) return 'Shopping';
@@ -1275,34 +1289,78 @@ async function parsePDF(file) {
             let key = null;
             for (const k of byY.keys()) if (Math.abs(k - y) <= 2) { key = k; break; }
             if (key === null) { key = y; byY.set(key, []); }
-            byY.get(key).push({x: item.transform[4], str: item.str});
+            const x = item.transform[4];
+            byY.get(key).push({x, mid: x + (item.width || 0) / 2, str: item.str.trim()});
         });
         [...byY.entries()].sort((a, b) => b[0] - a[0]).forEach(([, items]) => {
-            lines.push(items.sort((a, b) => a.x - b.x).map(i => i.str).join(' ').replace(/\s+/g, ' ').trim());
+            items.sort((a, b) => a.x - b.x);
+            lines.push({items, text: items.map(i => i.str).join(' ').replace(/\s+/g, ' ').trim()});
         });
     }
     // Transaction lines start with a date and contain at least one amount
-    const dateRe = /^(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?|[A-Z][a-z]{2,8}\.? \d{1,2}(?:,? \d{4})?)\b/;
+    const dateRe = /^(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?|[A-Z][a-z]{2,8}\.? \d{1,2}(?:,? \d{4})?|\d{1,2}[ \-\/][A-Z][a-z]{2,8}\.?(?:[ \-\/,]+\d{2,4})?)\b/;
     const amtRe = /-?\$?\(?\d{1,3}(?:,\d{3})*\.\d{2}\)?(?: ?CR)?-?/gi;
-    rawCSVLines = [];
-    lines.forEach(line => {
-        const dm = line.match(dateRe);
+    const amtItemRe = /^-?\$?\(?\d{1,3}(?:,\d{3})*\.\d{2}\)?(?: ?CR)?-?$/i;
+    const balanceRowRe = /opening balance|closing balance|balance (brought|carried) forward|previous balance|new balance|^balance$/i;
+    // Bank statements print separate "Money out" / "Money in" (withdrawals / deposits, debit / credit)
+    // columns of positive numbers. Read the header row to learn where each column sits, then place
+    // every number on a transaction line into the nearest column.
+    const isOutHeader = s => /money ?out|withdraw|debit|paid ?out|charges|purchases/i.test(s);
+    const isInHeader = s => /money ?in|deposit|credit|paid ?in|payments?\b/i.test(s);
+    const isBalHeader = s => /balance|borrowings/i.test(s);
+    let columns = null;                                 // {out, in, bal} header x-midpoints
+    const columnRows = [], legacyRows = [];
+    lines.forEach(({items, text}) => {
+        if (/date/i.test(text)) {
+            const out = items.find(i => isOutHeader(i.str) && !isInHeader(i.str));
+            const inn = items.find(i => isInHeader(i.str) && !isOutHeader(i.str));
+            if (out && inn && !amtItemRe.test(out.str)) {
+                const bal = items.find(i => isBalHeader(i.str));
+                columns = {out: out.mid, in: inn.mid, bal: bal ? bal.mid : null};
+                return;
+            }
+        }
+        const dm = text.match(dateRe);
         if (!dm) return;
-        const amounts = [...line.matchAll(amtRe)].map(x => x[0]);
-        if (!amounts.length) return;
-        // Bank statements print a running balance after the amount — with 2+ numbers, take the second-to-last
-        const amount = amounts.length >= 2 ? amounts[amounts.length - 2] : amounts[0];
-        let desc = line.slice(dm[0].length).trim();
-        // Card statements often show two dates (transaction + posting) — drop the second
-        const dm2 = desc.match(dateRe);
+        let desc = text.slice(dm[0].length).trim();
+        const dm2 = desc.match(dateRe);   // card statements show two dates (transaction + posting) — drop the second
         if (dm2) desc = desc.slice(dm2[0].length).trim();
-        amounts.forEach(a => { desc = desc.replace(a, ''); });
-        desc = desc.replace(/\s+/g, ' ').trim();
-        if (desc) rawCSVLines.push([dm[0], desc, amount]);
+        if (columns) {
+            const nums = items.filter(i => amtItemRe.test(i.str));
+            if (!nums.length) return;
+            let out = '', inn = '';
+            nums.forEach(n => {
+                const targets = [['out', columns.out], ['in', columns.in]];
+                if (columns.bal !== null) targets.push(['bal', columns.bal]);
+                targets.sort((a, b) => Math.abs(a[1] - n.mid) - Math.abs(b[1] - n.mid));
+                const col = targets[0][0];
+                if (col === 'out' && !out) out = n.str;
+                else if (col === 'in' && !inn) inn = n.str;
+                desc = desc.replace(n.str, '');
+            });
+            desc = desc.replace(/\s+/g, ' ').trim();
+            if (!desc || balanceRowRe.test(desc) || (!out && !inn)) return;
+            columnRows.push([dm[0], desc, out, inn]);
+        } else {
+            const amounts = [...text.matchAll(amtRe)].map(x => x[0]);
+            if (!amounts.length) return;
+            // Bank statements print a running balance after the amount — with 2+ numbers, take the second-to-last
+            const amount = amounts.length >= 2 ? amounts[amounts.length - 2] : amounts[0];
+            amounts.forEach(a => { desc = desc.replace(a, ''); });
+            desc = desc.replace(/\s+/g, ' ').trim();
+            if (desc && !balanceRowRe.test(desc)) legacyRows.push([dm[0], desc, amount]);
+        }
     });
     hasHeaderRow = false;
-    columnMapping = { date: 0, description: 1, amount: 2, debit: -1, credit: -1 };
-    stmtTypeGuess = 'credit';
+    if (columnRows.length) {
+        rawCSVLines = columnRows;
+        columnMapping = { date: 0, description: 1, amount: -1, debit: 2, credit: 3 };
+        stmtTypeGuess = 'bank';
+    } else {
+        rawCSVLines = legacyRows;
+        columnMapping = { date: 0, description: 1, amount: 2, debit: -1, credit: -1 };
+        stmtTypeGuess = 'credit';
+    }
 }
 
 // ==================== NET WORTH & DEBT ====================
