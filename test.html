@@ -105,6 +105,8 @@
     button.cat-del { color: #dc3545; }
     .cat-help { font-size: 0.88rem; opacity: 0.75; margin: 0 0 10px; }
     select.row-cat { padding: 4px 6px; margin: 0; font-size: 0.85rem; max-width: 210px; }
+    .cat-move { flex: 1 0 100%; display: flex; gap: 6px; align-items: center; margin-top: 4px; font-size: 0.85rem; }
+    .cat-move select { padding: 3px 6px; font-size: 0.82rem; margin: 0; }
 </style>
 
 <div class="container">
@@ -341,6 +343,7 @@ let expenses = store.get('expenses') || [];
 let recurring = store.get('recurring') || [];
 let customCategories = store.get('customCategories') || [];
 let subCategories = store.get('subCategories') || {};   // { parent: [sub, ...] }
+let demotedCategories = store.get('demotedCategories') || [];   // base categories turned into someone else's sub-category
 let assets = store.get('assets') || [];
 let liabilities = store.get('liabilities') || [];
 let editId = null;
@@ -602,7 +605,7 @@ const catStore = typeof store !== 'undefined' ? store : {
     set: (k, v) => localStorage.setItem(k, JSON.stringify(v))
 };
 function allCategories() {
-    return [...BASE_CATEGORIES.filter(c => c !== 'Other'), ...customCategories, 'Other'];
+    return [...BASE_CATEGORIES.filter(c => c !== 'Other' && !demotedCategories.includes(c)), ...customCategories, 'Other'];
 }
 function catParent(c) { return String(c || '').split(CAT_SEP)[0]; }
 function catChild(c) { return String(c || '').split(CAT_SEP)[1] || ''; }
@@ -734,15 +737,27 @@ function renderCategoryManager() {
     const counts = {};
     expenses.forEach(e => { counts[e.category] = (counts[e.category] || 0) + 1; });
     const countOf = c => counts[c] ? `<span class="cat-count">${counts[c]}</span>` : '';
-    list.innerHTML = allCategories().map(c => {
+    const q = attr => attr.replace(/"/g, '&quot;');
+    const cats = allCategories();
+    list.innerHTML = cats.map(c => {
         const custom = customCategories.includes(c);
         const subs = subsOf(c).map(s => `<span class="pill cat-sub">${esc(s)}${countOf(c + CAT_SEP + s)}
+            <button class="cat-x" onclick="promoteSub(${JSON.stringify(c).replace(/"/g, '&quot;')}, ${JSON.stringify(s).replace(/"/g, '&quot;')})" aria-label="Make ${esc(s)} its own category" title="Make top-level">↑</button>
             <button class="cat-x" onclick="deleteSubCategory(${JSON.stringify(c).replace(/"/g, '&quot;')}, ${JSON.stringify(s).replace(/"/g, '&quot;')}, this)" aria-label="Remove sub-category ${esc(s)}">×</button></span>`).join('');
+        const canMove = c !== 'Other' && !subsOf(c).length && cats.length > 1;
+        const moveControl = canMove ? `<div class="cat-move">
+            <select class="move-target" aria-label="Choose a parent for ${esc(c)}">
+                <option value="">↳ Make sub-category of…</option>
+                ${cats.filter(x => x !== c).map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join('')}
+            </select>
+            <button class="cat-x" onclick="convertCategoryRow(${JSON.stringify(c).replace(/"/g, '&quot;')}, this)">Move</button>
+        </div>` : '';
         return `<div class="cat-row">
             <div class="cat-name"><strong>${esc(c)}</strong>${countOf(c)}${custom ? ' <span class="pill">custom</span>' : ''}</div>
             <div class="cat-subs">${subs || '<span class="cat-none">no sub-categories</span>'}
                 <button class="cat-x cat-add" onclick="quickAddSub(${JSON.stringify(c).replace(/"/g, '&quot;')})" aria-label="Add sub-category to ${esc(c)}">+ sub</button></div>
             ${custom ? `<button class="cat-x cat-del" onclick="deleteCategory(${JSON.stringify(c).replace(/"/g, '&quot;')}, this)" aria-label="Remove category ${esc(c)}">Remove</button>` : ''}
+            ${moveControl}
         </div>`;
     }).join('');
 }
@@ -754,6 +769,55 @@ function quickAddSub(parent) {
     parentSel.value = parent;
     nameEl.placeholder = `New sub-category under ${parent}`;
     nameEl.focus();
+}
+
+// Turn an existing top-level category into a sub-category of another one, moving its expenses
+// with it. A category that already has sub-categories of its own can't be nested further.
+function convertToSub(name, parent) {
+    if (!parent) return showToast('Choose a category to nest it under', 'error');
+    if (name === parent) return showToast('Cannot move a category under itself', 'error');
+    if (name === 'Other') return showToast('"Other" cannot be made a sub-category', 'error');
+    if (!allCategories().includes(name)) return showToast(`"${name}" is not a top-level category`, 'error');
+    if (!allCategories().includes(parent)) return showToast(`Unknown category "${parent}"`, 'error');
+    if (subsOf(name).length) return showToast(`${name} has its own sub-categories — remove or move those first`, 'error');
+    if (customCategories.includes(name)) customCategories = customCategories.filter(c => c !== name);
+    else if (!demotedCategories.includes(name)) demotedCategories.push(name);
+    const subs = subsOf(parent);
+    const dupe = subs.find(s => s.toLowerCase() === name.toLowerCase());
+    if (!dupe) { subs.push(name); subCategories[parent] = subs; }
+    const finalName = dupe || name;
+    const moved = reassignCategory(name, parent + CAT_SEP + finalName);
+    persistCategoryLists();
+    populateCategorySelect();
+    renderCategoryManager();
+    showToast(`${name} is now a sub-category of ${parent}` + (moved ? `; ${moved} expense${moved === 1 ? '' : 's'} updated` : ''));
+}
+
+// Reverse of convertToSub: make a sub-category its own top-level category again.
+function promoteSub(parent, sub) {
+    const subs = subsOf(parent);
+    if (!subs.includes(sub)) return;
+    subCategories[parent] = subs.filter(s => s !== sub);
+    if (!subCategories[parent].length) delete subCategories[parent];
+    if (demotedCategories.includes(sub)) demotedCategories = demotedCategories.filter(c => c !== sub);
+    else if (!customCategories.includes(sub) && !BASE_CATEGORIES.includes(sub)) customCategories.push(sub);
+    const moved = reassignCategory(parent + CAT_SEP + sub, sub);
+    persistCategoryLists();
+    populateCategorySelect();
+    renderCategoryManager();
+    showToast(`${sub} is now its own category` + (moved ? `; ${moved} expense${moved === 1 ? '' : 's'} updated` : ''));
+}
+
+function persistCategoryLists() {
+    catStore.set('customCategories', customCategories);
+    catStore.set('subCategories', subCategories);
+    catStore.set('demotedCategories', demotedCategories);
+}
+
+// Read the paired <select> next to a row's "Move" button and apply the conversion.
+function convertCategoryRow(name, btn) {
+    const sel = btn.previousElementSibling;
+    convertToSub(name, sel.value);
 }
 
 // ==================== EXPENSES CORE ====================
@@ -1856,7 +1920,7 @@ function clearAllData(btn) {
     impStore.set('statements', statements);
     renderStatements();
     showToast('All data cleared');
-    expenses = []; recurring = []; customCategories = []; subCategories = {}; assets = []; liabilities = [];
+    expenses = []; recurring = []; customCategories = []; subCategories = {}; demotedCategories = []; assets = []; liabilities = [];
     saveData();
     saveNetWorthData();
     document.getElementById('snowballResults').innerHTML = '';

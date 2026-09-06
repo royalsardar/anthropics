@@ -17,6 +17,7 @@ Two builds are included:
 - Add, edit, and delete expenses with category, "for" item (e.g. a specific car or phone), date, and who paid
 - 26 built-in categories (including **Transfers** for Interac e-Transfers, EFTs and account transfers) plus your own categories **and sub-categories** (e.g. Insurance › Home): add them from the 🏷️ Categories panel or inline from the category picker, use them everywhere a category is chosen (expense form, import preview, recurring bills), and remove them again with expenses moved to the parent category (or Other)
 - The spending chart rolls sub-categories up to their parent category
+- **Turn an existing category into a sub-category, or a sub-category back into its own category**: every top-level category (built-in or custom) that has no sub-categories of its own can be moved under another one with one click, moving its expenses and its learned merchant mapping with it; a ↑ button on any sub-category promotes it back to top-level
 - **Recurring expenses** (weekly / bi-weekly / monthly / yearly) that auto-generate entries each time the app opens, with pause/resume
 - Monthly summary with total, this-month and average-per-month stats, per-person breakdown, and a spending-by-category chart
 - **Change a category right in the All Expenses table**: each row's category is a dropdown; picking a new one saves instantly, updates the chart, and teaches the merchant → category mapping used by future imports
