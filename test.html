@@ -93,6 +93,17 @@
     @media (prefers-reduced-motion: no-preference) {
         button { transition: filter 0.12s ease; }
     }
+    .cat-row { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; padding: 8px 0; border-bottom: 1px solid var(--border); }
+    .cat-row:last-child { border-bottom: none; }
+    .cat-name { min-width: 220px; flex: 0 0 220px; }
+    .cat-subs { flex: 1; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; min-width: 200px; }
+    .cat-sub { display: inline-flex; align-items: center; gap: 4px; }
+    .cat-count { display: inline-block; margin-left: 6px; font-size: 0.72rem; opacity: 0.75; font-variant-numeric: tabular-nums; }
+    .cat-none { font-size: 0.85rem; opacity: 0.6; }
+    button.cat-x { background: transparent; color: inherit; border: 1px solid var(--border); padding: 0 6px; margin: 0; font-size: 0.8rem; line-height: 1.4; border-radius: 6px; font-weight: 600; }
+    button.cat-x:hover { filter: none; background: var(--muted); }
+    button.cat-del { color: #dc3545; }
+    .cat-help { font-size: 0.88rem; opacity: 0.75; margin: 0 0 10px; }
 </style>
 
 <div class="container">
@@ -122,6 +133,7 @@
                     <option value="">Category</option>
                 </select>
                 <input type="text" id="customCategory" placeholder="New category" style="width:180px;display:none;">
+                <select id="customParent" style="width:180px;display:none;" title="Parent category"></select>
                 <input type="text" id="forItem" placeholder="For (Toyota Camry, John's Phone...)" style="width:240px" list="itemSuggestions">
                 <input type="date" id="date">
                 <input type="text" id="paidby" placeholder="Paid by" style="width:150px">
@@ -136,9 +148,21 @@
             <button onclick="saveExpense()">Save Expense</button>
             <button class="ghost" onclick="cancelEdit()">Cancel</button>
             <button onclick="importStatement()" class="ghost">📥 Import Statements (CSV/PDF)</button>
+            <button class="ghost" onclick="toggleCategoryManager()">🏷️ Categories</button>
             <input type="file" id="fileInput" accept=".csv,.pdf,text/csv,application/pdf" multiple style="display:none" onchange="handleFileSelected(event)">
         </div>
 
+        <!-- Category manager -->
+        <div class="card" id="categoryCard" style="display:none;">
+            <h2>🏷️ Categories &amp; Sub-categories</h2>
+            <p class="cat-help">Add your own categories, or sub-categories under any category (e.g. Insurance › Home). Sub-categories appear in every category picker and roll up to their parent in the chart. Removing one moves its expenses to the parent.</p>
+            <div class="flex-row">
+                <input type="text" id="newCatName" placeholder="New category or sub-category" style="width:260px" onkeydown="if(event.key==='Enter')addCategoryFromManager()">
+                <select id="newCatParent" style="width:230px"></select>
+                <button onclick="addCategoryFromManager()">Add</button>
+            </div>
+            <div id="categoryList"></div>
+        </div>
         <!-- Import Preview -->
         <div class="card" id="importPreview" style="display:none;">
             <h2>Import Statement — Column Mapping</h2>
@@ -314,6 +338,7 @@ const store = (() => {
 let expenses = store.get('expenses') || [];
 let recurring = store.get('recurring') || [];
 let customCategories = store.get('customCategories') || [];
+let subCategories = store.get('subCategories') || {};   // { parent: [sub, ...] }
 let assets = store.get('assets') || [];
 let liabilities = store.get('liabilities') || [];
 let editId = null;
@@ -565,19 +590,168 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', red
 new MutationObserver(redrawAllCharts).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
 // ==================== CATEGORIES ====================
-function allCategories() { return [...BASE_CATEGORIES.filter(c => c !== 'Other'), ...customCategories, 'Other']; }
+// Top-level categories are the built-ins plus customCategories. Sub-categories live in
+// subCategories = { 'Insurance': ['Home', 'Auto'] } and are stored on expenses as the full
+// path 'Insurance › Home', so every existing string-based code path (table, search, CSV,
+// learned merchant categories) keeps working; charts roll a path up to its parent.
+const CAT_SEP = ' › ';
+const catStore = typeof store !== 'undefined' ? store : {
+    get: k => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+    set: (k, v) => localStorage.setItem(k, JSON.stringify(v))
+};
+function allCategories() {
+    return [...BASE_CATEGORIES.filter(c => c !== 'Other'), ...customCategories, 'Other'];
+}
+function catParent(c) { return String(c || '').split(CAT_SEP)[0]; }
+function catChild(c) { return String(c || '').split(CAT_SEP)[1] || ''; }
+function subsOf(parent) { return subCategories[parent] || []; }
+function categoryExists(v) {
+    const [p, s] = String(v).split(CAT_SEP);
+    return allCategories().includes(p) && (!s || subsOf(p).includes(s));
+}
+function cleanCatName(name) { return String(name || '').split(CAT_SEP).join(' ').replace(/\s+/g, ' ').trim(); }
+
+// <option>s for every category; parents with sub-categories become an <optgroup>
+function categoryOptionsHTML(selected) {
+    return allCategories().map(c => {
+        const subs = subsOf(c);
+        const opt = (value, label) => `<option value="${esc(value)}" ${value === selected ? 'selected' : ''}>${esc(label)}</option>`;
+        if (!subs.length) return opt(c, c);
+        return `<optgroup label="${esc(c)}">${opt(c, c + ' (general)')}${subs.map(s => opt(c + CAT_SEP + s, s)).join('')}</optgroup>`;
+    }).join('');
+}
+
 function populateCategorySelect(keepValue) {
     const sel = document.getElementById('category');
     const current = keepValue ?? sel.value;
-    sel.innerHTML = '<option value="">Category</option>' +
-        allCategories().map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('') +
-        '<option value="__custom__">+ Add Custom</option>';
+    sel.innerHTML = '<option value="">Category</option>' + categoryOptionsHTML(current) +
+        '<option value="__custom__">+ Add category / sub-category</option>';
     if (current && [...sel.options].some(o => o.value === current)) sel.value = current;
+    const parentSel = document.getElementById('customParent');
+    if (parentSel) parentSel.innerHTML = '<option value="">Top-level category</option>' +
+        allCategories().map(c => `<option value="${esc(c)}">Under ${esc(c)}</option>`).join('');
 }
+
 function handleCategoryChange() {
     const custom = document.getElementById('customCategory');
-    custom.style.display = document.getElementById('category').value === '__custom__' ? 'inline-block' : 'none';
-    if (custom.style.display !== 'none') custom.focus();
+    const parentSel = document.getElementById('customParent');
+    const adding = document.getElementById('category').value === '__custom__';
+    custom.style.display = adding ? 'inline-block' : 'none';
+    if (parentSel) parentSel.style.display = adding ? 'inline-block' : 'none';
+    if (adding) custom.focus();
+}
+
+// Create a category (parent = '') or a sub-category under parent. Returns the stored value, or null.
+function addCategory(rawName, parent) {
+    const name = cleanCatName(rawName);
+    if (!name) { showToast('Please enter a category name', 'error'); return null; }
+    if (parent) {
+        if (!allCategories().includes(parent)) { showToast(`Unknown category "${parent}"`, 'error'); return null; }
+        const subs = subsOf(parent);
+        const dupe = subs.find(s => s.toLowerCase() === name.toLowerCase());
+        if (!dupe) { subs.push(name); subCategories[parent] = subs; }
+        catStore.set('subCategories', subCategories);
+        populateCategorySelect();
+        renderCategoryManager();
+        showToast(dupe ? `"${parent}${CAT_SEP}${dupe}" already exists` : `Added sub-category ${parent}${CAT_SEP}${name}`);
+        return parent + CAT_SEP + (dupe || name);
+    }
+    const existing = allCategories().find(c => c.toLowerCase() === name.toLowerCase());
+    if (!existing) {
+        customCategories.push(name);
+        catStore.set('customCategories', customCategories);
+    }
+    populateCategorySelect();
+    renderCategoryManager();
+    showToast(existing ? `"${existing}" already exists` : `Added category ${name}`);
+    return existing || name;
+}
+
+function reassignCategory(from, to) {
+    let n = 0;
+    const move = e => { if (e.category === from) { e.category = to; n++; } };
+    expenses.forEach(move);
+    recurring.forEach(move);
+    Object.keys(learnedCategories).forEach(k => { if (learnedCategories[k] === from) learnedCategories[k] = to; });
+    impStore.set('learnedCategories', learnedCategories);
+    return n;
+}
+
+// Removing a sub-category moves its expenses to the parent; removing a custom category moves them to Other
+function deleteSubCategory(parent, sub, btn) {
+    needsConfirm('sub|' + parent + '|' + sub, btn, () => {
+        const moved = reassignCategory(parent + CAT_SEP + sub, parent);
+        subCategories[parent] = subsOf(parent).filter(s => s !== sub);
+        if (!subCategories[parent].length) delete subCategories[parent];
+        catStore.set('subCategories', subCategories);
+        populateCategorySelect();
+        saveData();
+        renderCategoryManager();
+        showToast(`Removed ${parent}${CAT_SEP}${sub}` + (moved ? `; ${moved} expense${moved === 1 ? '' : 's'} moved to ${parent}` : ''));
+    }, 'Remove?');
+}
+
+function deleteCategory(name, btn) {
+    if (!customCategories.includes(name)) return showToast('Built-in categories cannot be removed', 'error');
+    needsConfirm('cat|' + name, btn, () => {
+        let moved = reassignCategory(name, 'Other');
+        subsOf(name).forEach(s => { moved += reassignCategory(name + CAT_SEP + s, 'Other'); });
+        delete subCategories[name];
+        customCategories = customCategories.filter(c => c !== name);
+        catStore.set('subCategories', subCategories);
+        populateCategorySelect();
+        saveData();
+        renderCategoryManager();
+        showToast(`Removed ${name}` + (moved ? `; ${moved} expense${moved === 1 ? '' : 's'} moved to Other` : ''));
+    }, 'Remove?');
+}
+
+function toggleCategoryManager() {
+    const card = document.getElementById('categoryCard');
+    const open = card.style.display === 'none';
+    card.style.display = open ? 'block' : 'none';
+    if (open) { renderCategoryManager(); card.scrollIntoView({behavior: 'smooth', block: 'nearest'}); }
+}
+
+function addCategoryFromManager() {
+    const nameEl = document.getElementById('newCatName');
+    const parent = document.getElementById('newCatParent').value;
+    if (addCategory(nameEl.value, parent)) { nameEl.value = ''; nameEl.focus(); }
+}
+
+function renderCategoryManager() {
+    const list = document.getElementById('categoryList');
+    if (!list) return;
+    const parentSel = document.getElementById('newCatParent');
+    if (parentSel) {
+        const keep = parentSel.value;
+        parentSel.innerHTML = '<option value="">as a top-level category</option>' +
+            allCategories().map(c => `<option value="${esc(c)}">under ${esc(c)}</option>`).join('');
+        if ([...parentSel.options].some(o => o.value === keep)) parentSel.value = keep;
+    }
+    const counts = {};
+    expenses.forEach(e => { counts[e.category] = (counts[e.category] || 0) + 1; });
+    const countOf = c => counts[c] ? `<span class="cat-count">${counts[c]}</span>` : '';
+    list.innerHTML = allCategories().map(c => {
+        const custom = customCategories.includes(c);
+        const subs = subsOf(c).map(s => `<span class="pill cat-sub">${esc(s)}${countOf(c + CAT_SEP + s)}
+            <button class="cat-x" onclick="deleteSubCategory(${JSON.stringify(c).replace(/"/g, '&quot;')}, ${JSON.stringify(s).replace(/"/g, '&quot;')}, this)" aria-label="Remove sub-category ${esc(s)}">×</button></span>`).join('');
+        return `<div class="cat-row">
+            <div class="cat-name"><strong>${esc(c)}</strong>${countOf(c)}${custom ? ' <span class="pill">custom</span>' : ''}</div>
+            <div class="cat-subs">${subs || '<span class="cat-none">no sub-categories</span>'}
+                <button class="cat-x cat-add" onclick="quickAddSub(${JSON.stringify(c).replace(/"/g, '&quot;')})" aria-label="Add sub-category to ${esc(c)}">+ sub</button></div>
+            ${custom ? `<button class="cat-x cat-del" onclick="deleteCategory(${JSON.stringify(c).replace(/"/g, '&quot;')}, this)" aria-label="Remove category ${esc(c)}">Remove</button>` : ''}
+        </div>`;
+    }).join('');
+}
+
+// "+ sub" on a row pre-selects that parent in the add box
+function quickAddSub(parent) {
+    const parentSel = document.getElementById('newCatParent');
+    const nameEl = document.getElementById('newCatName');
+    parentSel.value = parent;
+    nameEl.placeholder = `New sub-category under ${parent}`;
+    nameEl.focus();
 }
 
 // ==================== EXPENSES CORE ====================
@@ -585,6 +759,7 @@ function saveData() {
     store.set('expenses', expenses);
     store.set('recurring', recurring);
     store.set('customCategories', customCategories);
+    store.set('subCategories', subCategories);
     renderTable();
     renderRecurring();
     updateSummary();
@@ -594,12 +769,9 @@ function saveExpense() {
     let category = document.getElementById('category').value;
     const custom = document.getElementById('customCategory').value.trim();
     if (category === '__custom__') {
-        if (!custom) return showToast('Please enter the custom category name', 'error');
-        category = custom;
-        if (!customCategories.includes(category) && !BASE_CATEGORIES.includes(category)) {
-            customCategories.push(category);
-            populateCategorySelect(category);
-        }
+        category = addCategory(custom, document.getElementById('customParent').value);
+        if (!category) return;
+        populateCategorySelect(category);
     }
     const desc = document.getElementById('desc').value.trim();
     const amount = parseFloat(document.getElementById('amount').value);
@@ -629,6 +801,7 @@ function clearForm() {
     ['desc','amount','forItem','paidby','customCategory'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('category').value = '';
     document.getElementById('customCategory').style.display = 'none';
+    document.getElementById('customParent').style.display = 'none';
     document.getElementById('date').value = getToday();
     document.getElementById('isRecurring').checked = false;
     document.getElementById('frequency').disabled = true;
@@ -783,7 +956,7 @@ function updateSummary() {
         Object.entries(byPerson).sort((a,b) => b[1]-a[1]).map(([p, v]) => `${esc(p)}: <strong>${money(v)}</strong>`).join('<br>') || '—';
 
     const byCat = {};
-    filtered.forEach(e => { byCat[e.category] = (byCat[e.category] || 0) + e.amount; });
+    filtered.forEach(e => { const k = catParent(e.category); byCat[k] = (byCat[k] || 0) + e.amount; });
     const entries = Object.entries(byCat).sort((a,b) => b[1]-a[1]).slice(0, 12);
     drawBarChart(document.getElementById('mainChartBox'), entries.map(e => e[0]), entries.map(e => e[1]));
 }
@@ -1169,7 +1342,6 @@ function applyMappingAndPreview() {
         tbody.innerHTML = '<tr><td colspan="6">No valid transactions found with this mapping — adjust the columns above and re-apply.</td></tr>';
         return;
     }
-    const catOpts = allCategories();
     previewRows.forEach((r, i) => {
         const status = r.dupe ? '<span class="pill">duplicate</span>'
             : r.isPayment ? '<span class="pill">payment / credit</span>' : '';
@@ -1177,8 +1349,7 @@ function applyMappingAndPreview() {
         row.innerHTML = `
             <td><input type="checkbox" data-i="${i}" class="preview-check" ${r.dupe || r.isPayment ? '' : 'checked'}></td>
             <td>${esc(r.date)}</td><td>${esc(r.desc)}</td><td class="num">${money(r.amount)}</td>
-            <td><select data-i="${i}" class="preview-cat">${catOpts.map(c =>
-                `<option value="${esc(c)}" ${c === r.category ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></td>
+            <td><select data-i="${i}" class="preview-cat">${categoryOptionsHTML(r.category)}</select></td>
             <td>${status}</td>`;
         tbody.appendChild(row);
     });
@@ -1598,7 +1769,7 @@ function clearAllData(btn) {
     impStore.set('statements', statements);
     renderStatements();
     showToast('All data cleared');
-    expenses = []; recurring = []; customCategories = []; assets = []; liabilities = [];
+    expenses = []; recurring = []; customCategories = []; subCategories = {}; assets = []; liabilities = [];
     saveData();
     saveNetWorthData();
     document.getElementById('snowballResults').innerHTML = '';

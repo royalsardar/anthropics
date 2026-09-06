@@ -15,7 +15,8 @@ Two builds are included:
 
 ### 📊 Expenses
 - Add, edit, and delete expenses with category, "for" item (e.g. a specific car or phone), date, and who paid
-- 25 built-in categories plus custom categories (saved for reuse)
+- 25 built-in categories plus your own categories **and sub-categories** (e.g. Insurance › Home): add them from the 🏷️ Categories panel or inline from the category picker, use them everywhere a category is chosen (expense form, import preview, recurring bills), and remove them again with expenses moved to the parent category (or Other)
+- The spending chart rolls sub-categories up to their parent category
 - **Recurring expenses** (weekly / bi-weekly / monthly / yearly) that auto-generate entries each time the app opens, with pause/resume
 - Monthly summary with total, this-month and average-per-month stats, per-person breakdown, and a spending-by-category chart
 - Live search filter and CSV export
